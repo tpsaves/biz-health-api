@@ -1,0 +1,9 @@
+.env
+*.user
+*.suo
+.vs/
+bin/
+obj/
+__pycache__/
+*.pyc
+.env.local
