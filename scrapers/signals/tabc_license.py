@@ -39,7 +39,8 @@ def scrape_license(trade_name: str, city: str, restaurant_id: str, session: Sess
         _TABC_LICENSES_URL,
         params={
             "$where": (
-                f"upper(aimstradename) like '%{trade_name.upper()}%' "
+                # SoQL escapes single quotes by doubling them — same rule as ANSI SQL.
+                f"upper(aimstradename) like '%{trade_name.upper().replace(chr(39), chr(39)*2)}%' "
                 f"AND upper(city)='{city.upper()}'"
             ),
             "$limit": "10",

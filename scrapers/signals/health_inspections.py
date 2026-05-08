@@ -33,7 +33,9 @@ def scrape_inspections(name: str, restaurant_id: str, session: Session) -> dict:
     resp = httpx.get(
         _DALLAS_INSPECTIONS_URL,
         params={
-            "$where": f"upper(program_identifier) like '%{name.upper()}%'",
+            # SoQL escapes single quotes by doubling them — same rule as ANSI SQL.
+            # "Torchy's" → "TORCHY''S" so the LIKE string literal closes correctly.
+            "$where": f"upper(program_identifier) like '%{name.upper().replace(chr(39), chr(39)*2)}%'",
             "$order": "insp_date DESC",
             "$limit": "10",
         },

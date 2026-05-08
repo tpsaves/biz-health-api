@@ -226,14 +226,20 @@ Note: Health inspection and TABC license scrapers require no API keys — both u
 
 **Phase 3b — COMPLETE**
 - Trend analysis added to scoring engine
-- health_scores table extended with trend fields (see schema above)
+- health_scores table extended with trend fields
 - EF Core migration created for schema changes
 - license_history_risk caps overall_score at 65
 - API response updated to include all trend fields
 
-**Phase 4 — APScheduler automation (current)**
-- Wire all scrapers into APScheduler for recurring runs
-- Google Places + Foursquare: daily
-- Health inspections + TABC license: weekly
-- Hours monitor: daily
-- Goal: scrapers run automatically without manual execution
+**Phase 4 — COMPLETE**
+- APScheduler wired up with all 6 jobs running automatically
+- Scheduler runs as container entry point
+- Error handling added across all scrapers
+- Test cycle confirmed: Pecan Lodge overall_score=93 across all jobs
+
+**Phase 5 — Multi-restaurant support (current)**
+- Bulk onboarding via CSV (name, address, city, zip)
+- Auto-lookup of Google Place ID and Foursquare ID per restaurant
+- Dynamic scheduler job registration for newly onboarded restaurants
+- New API endpoints: POST /onboard, GET /restaurants, GET /restaurants/{id}
+- Success condition: 5 DFW restaurants onboarded and scoring end-to-end
