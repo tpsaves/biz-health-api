@@ -43,6 +43,20 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # Verifies the main loop in main.py is still running by checking that the
+      # heartbeat file exists and was updated within the last 120 s.
+      # main.py touches /tmp/scheduler_health every 60 s, so 120 s gives two
+      # missed heartbeats before Docker marks the container unhealthy and restarts it.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import time, os; f='/tmp/scheduler_health'; exit(0 if os.path.exists(f) and time.time()-os.path.getmtime(f)<120 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
 volumes:
   postgres_data:
