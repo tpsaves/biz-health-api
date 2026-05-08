@@ -160,10 +160,10 @@ ASPNETCORE_ENVIRONMENT=Development
 - Scaffolding, docker-compose, Google Places scraper end-to-end
 - Raw signals confirmed landing in raw_signals table
 
-**Phase 2 — Yelp scraper + scoring model (current)**
-- Build Yelp scraper writing to raw_signals
+**Phase 2 — Foursquare scraper + scoring model (current)**
+- Build Foursquare scraper writing to raw_signals
 - Build scoring engine that reads raw_signals and writes computed scores to health_scores
 - review_velocity_score and rating_trend_score from Google data
-- Cross-validate rating with Yelp data
+- Cross-validate rating with Foursquare data
 
 **Phase 3 — Job postings signal (planned)**
