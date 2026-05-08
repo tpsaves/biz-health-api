@@ -156,13 +156,14 @@ ASPNETCORE_ENVIRONMENT=Development
 ## Current Focus
 > Update this section as the project progresses.
 
-**Phase 1 — Scaffold & Google Places scraper end-to-end**
-- Scaffold docker-compose with `api`, `scrapers`, and `db` containers
-- Build Google Places scraper: accepts a `place_id`, fetches review count + rating, writes to `raw_signals`
-- Verify data lands in PostgreSQL 17
-- Expose raw signal via a basic .NET endpoint at `GET /api/v1/restaurants/{id}/score`
-- Success condition: `docker-compose up` runs clean and `GET /health` returns 200
+**Phase 1 — COMPLETE**
+- Scaffolding, docker-compose, Google Places scraper end-to-end
+- Raw signals confirmed landing in raw_signals table
 
-**Phase 2 — Yelp scraper + scoring model (planned)**
+**Phase 2 — Yelp scraper + scoring model (current)**
+- Build Yelp scraper writing to raw_signals
+- Build scoring engine that reads raw_signals and writes computed scores to health_scores
+- review_velocity_score and rating_trend_score from Google data
+- Cross-validate rating with Yelp data
 
 **Phase 3 — Job postings signal (planned)**
