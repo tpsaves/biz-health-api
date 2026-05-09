@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BizHealth — Restaurant Risk Assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #f1f5f9;
+      --surface:    #ffffff;
+      --border:     #e2e8f0;
+      --text:       #0f172a;
+      --muted:      #64748b;
+      --brand:      #1e3a8a;
+      --brand-mid:  #1d4ed8;
+      --brand-lt:   #eff6ff;
+
+      --green:      #15803d;
+      --green-bg:   #f0fdf4;
+      --green-bd:   #bbf7d0;
+      --amber:      #b45309;
+      --amber-bg:   #fffbeb;
+      --amber-bd:   #fde68a;
+      --orange:     #c2410c;
+      --orange-bg:  #fff7ed;
+      --orange-bd:  #fed7aa;
+      --red:        #b91c1c;
+      --red-bg:     #fef2f2;
+      --red-bd:     #fecaca;
+    }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    header {
+      background: var(--brand);
+      color: #fff;
+      border-bottom: 3px solid #1e40af;
+    }
+    .header-inner {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-mark {
+      width: 36px; height: 36px;
+      background: #3b82f6;
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 13px; letter-spacing: .5px; flex-shrink: 0;
+    }
+    .brand-name    { font-weight: 700; font-size: 17px; letter-spacing: -.3px; }
+    .brand-tagline { font-size: 12px; color: #93c5fd; margin-top: 1px; }
+    .header-spacer { flex: 1; }
+    .header-note   { font-size: 12px; color: #93c5fd; text-align: right; }
+
+    /* ── Main layout ─────────────────────────────────────────────────────── */
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* ── Cards ───────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    }
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .hidden { display: none !important; }
+
+    /* ── Search form ─────────────────────────────────────────────────────── */
+    .search-heading { font-size: 18px; font-weight: 600; margin-bottom: 16px; }
+    .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .form-group input {
+      height: 42px; padding: 0 13px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 15px; font-family: inherit; color: var(--text);
+      background: var(--surface);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--brand-mid);
+      box-shadow: 0 0 0 3px rgba(29,78,216,.12);
+    }
+    .fg-name    { flex: 2; min-width: 180px; }
+    .fg-address { flex: 3; min-width: 220px; }
+    .fg-city    { flex: 1; min-width: 120px; }
+    .search-actions { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+    .btn-primary {
+      height: 42px; padding: 0 22px;
+      background: var(--brand-mid); color: #fff;
+      border: none; border-radius: 8px;
+      font-size: 15px; font-weight: 600; font-family: inherit;
+      cursor: pointer; transition: background .15s;
+      white-space: nowrap;
+    }
+    .btn-primary:hover   { background: #1e40af; }
+    .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+    .search-status { font-size: 13px; color: var(--muted); }
+    .search-status.error { color: var(--red); }
+
+    /* ── Pin hint bar ────────────────────────────────────────────────────── */
+    .hint-bar {
+      background: var(--brand-lt);
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      color: var(--brand-mid);
+      font-weight: 500;
+    }
+
+    /* ── Result card ─────────────────────────────────────────────────────── */
+    .result-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .result-name    { font-size: 22px; font-weight: 700; line-height: 1.2; }
+    .result-address { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+    /* Pin button */
+    .btn-pin {
+      height: 36px; padding: 0 16px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px; font-weight: 600; font-family: inherit;
+      cursor: pointer; white-space: nowrap; flex-shrink: 0;
+      transition: all .15s;
+      background: var(--surface); color: var(--text);
+    }
+    .btn-pin:hover    { border-color: var(--brand-mid); color: var(--brand-mid); }
+    .btn-pin.pinned   { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+    .btn-pin:disabled { opacity: .45; cursor: not-allowed; }
+
+    /* Score overview band */
+    .score-overview {
+      display: flex; align-items: center; gap: 20px;
+      padding: 18px 20px; border-radius: 10px; margin-bottom: 24px;
+      border: 1px solid transparent;
+    }
+    .score-ring-wrap { flex-shrink: 0; }
+    .score-overview-text { flex: 1; }
+    .risk-badge {
+      display: inline-block;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+      padding: 3px 10px; border-radius: 20px; border: 1.5px solid;
+      margin-bottom: 6px;
+    }
+    .score-main-label { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+    .score-sublabel   { font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+    /* Section label */
+    .section-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
+      color: var(--muted); margin-bottom: 10px;
+    }
+
+    /* Score bars */
+    .bars { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+    .bar-row { display: flex; align-items: center; gap: 12px; }
+    .bar-label { width: 150px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
+    .bar-track {
+      flex: 1; height: 8px; background: var(--border); border-radius: 99px; overflow: hidden;
+    }
+    .bar-fill { height: 100%; border-radius: 99px; transition: width .4s ease; }
+    .bar-value { width: 36px; text-align: right; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+
+    /* Signal details */
+    .details-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 10px; margin-bottom: 24px;
+    }
+    .detail-item {
+      display: flex; flex-direction: column; gap: 2px;
+      padding: 10px 14px; background: var(--bg); border-radius: 8px;
+    }
+    .detail-key { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+    .detail-val { font-size: 13px; font-weight: 500; color: var(--text); }
+    .detail-val .sub { font-weight: 400; color: var(--muted); }
+
+    /* Recommendation box */
+    .rec-box {
+      border-left: 4px solid var(--border);
+      padding: 14px 16px;
+      background: var(--bg);
+      border-radius: 0 8px 8px 0;
+      margin-bottom: 16px;
+    }
+    .rec-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin-bottom: 6px; }
+    .rec-text  { font-size: 14px; line-height: 1.55; color: var(--text); }
+    .rec-note  { font-size: 13px; color: var(--amber); margin-top: 6px; }
+
+    .scored-at { font-size: 12px; color: var(--muted); }
+
+    /* ── Compare section ─────────────────────────────────────────────────── */
+    .compare-header-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .compare-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .compare-col {
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 20px; position: relative;
+    }
+    .compare-col-name    { font-size: 17px; font-weight: 700; margin-bottom: 2px; }
+    .compare-col-address { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+    .compare-score-row   { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+    .btn-unpin {
+      position: absolute; top: 14px; right: 14px;
+      height: 28px; padding: 0 10px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 12px; font-weight: 600; font-family: inherit;
+      background: var(--surface); color: var(--muted);
+      cursor: pointer; transition: all .15s;
+    }
+    .btn-unpin:hover { border-color: var(--red); color: var(--red); }
+
+    /* ── Recently scored ─────────────────────────────────────────────────── */
+    .recent-empty { font-size: 13px; color: var(--muted); padding: 4px 0; }
+    .recent-list  { display: flex; flex-direction: column; gap: 8px; }
+    .recent-row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 10px 14px;
+      border: 1px solid var(--border); border-radius: 8px;
+      cursor: pointer; transition: background .12s;
+    }
+    .recent-row:hover { background: var(--bg); }
+    .recent-score-badge {
+      width: 40px; height: 40px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700; flex-shrink: 0;
+    }
+    .recent-name    { font-size: 14px; font-weight: 600; }
+    .recent-address { font-size: 12px; color: var(--muted); }
+    .recent-date    { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="brand-mark">BH</div>
+    <div>
+      <div class="brand-name">BizHealth</div>
+      <div class="brand-tagline">Restaurant Risk Intelligence &middot; DFW</div>
+    </div>
+    <div class="header-spacer"></div>
+    <div class="header-note">For credit &amp; equipment finance teams</div>
+  </div>
+</header>
+
+<main>
+
+  <!-- Search -->
+  <div class="card">
+    <div class="search-heading">Score a Restaurant</div>
+    <div class="form-row">
+      <div class="form-group fg-name">
+        <label>Restaurant Name</label>
+        <input id="inp-name" type="text" placeholder="e.g. Pecan Lodge" autocomplete="off">
+      </div>
+      <div class="form-group fg-address">
+        <label>Address <span style="font-weight:400;text-transform:none;letter-spacing:0">(used to disambiguate)</span></label>
+        <input id="inp-address" type="text" placeholder="e.g. 2702 Main St">
+      </div>
+      <div class="form-group fg-city">
+        <label>City</label>
+        <input id="inp-city" type="text" value="Dallas">
+      </div>
+    </div>
+    <div class="search-actions">
+      <button class="btn-primary" id="btn-search" onclick="doSearch()">Search Restaurant</button>
+      <span class="search-status" id="search-status"></span>
+    </div>
+  </div>
+
+  <!-- Pin hint -->
+  <div class="hint-bar hidden" id="hint-bar">
+    1 restaurant pinned — search and pin a second restaurant to compare them side by side.
+  </div>
+
+  <!-- Result -->
+  <div class="hidden" id="result-section">
+    <div class="card" id="result-inner"></div>
+  </div>
+
+  <!-- Compare -->
+  <div class="hidden" id="compare-section">
+    <div class="card">
+      <div class="compare-header-row">
+        <div class="card-title" style="margin-bottom:0">Side-by-Side Comparison</div>
+        <button class="btn-primary" style="height:32px;padding:0 14px;font-size:13px" onclick="clearCompare()">Clear All</button>
+      </div>
+      <div class="compare-grid" id="compare-grid"></div>
+    </div>
+  </div>
+
+  <!-- Recently scored -->
+  <div class="card">
+    <div class="card-title">Recently Scored</div>
+    <div id="recent-container"><div class="recent-empty">No restaurants scored yet in this session.</div></div>
+  </div>
+
+</main>
+
+<script>
+  const API = 'http://localhost:8080';
+
+  // ── State ───────────────────────────────────────────────────────────────
+  const cache  = {};       // id → full API response
+  let   pinned = [];       // max 2 restaurant ids
+  let   recent = [];
+  try { recent = JSON.parse(localStorage.getItem('bh_recent') || '[]'); } catch {}
+
+  // ── Risk helpers ─────────────────────────────────────────────────────────
+  function riskColor(s) {
+    if (s >= 80) return 'var(--green)';
+    if (s >= 60) return 'var(--amber)';
+    if (s >= 40) return 'var(--orange)';
+    return 'var(--red)';
+  }
+  function riskBg(s) {
+    if (s >= 80) return 'var(--green-bg)';
+    if (s >= 60) return 'var(--amber-bg)';
+    if (s >= 40) return 'var(--orange-bg)';
+    return 'var(--red-bg)';
+  }
+  function riskBorder(s) {
+    if (s >= 80) return 'var(--green-bd)';
+    if (s >= 60) return 'var(--amber-bd)';
+    if (s >= 40) return 'var(--orange-bd)';
+    return 'var(--red-bd)';
+  }
+  function riskLabel(s) {
+    if (s >= 80) return 'Low Risk';
+    if (s >= 60) return 'Moderate Risk';
+    if (s >= 40) return 'Elevated Risk';
+    return 'High Risk';
+  }
+
+  // ── SVG score ring ────────────────────────────────────────────────────────
+  function scoreRing(score, size = 88) {
+    const cx = size / 2, cy = size / 2;
+    const r  = size * 0.38, sw = size * 0.10;
+    const c  = 2 * Math.PI * r;
+    const d  = ((score ?? 0) / 100 * c).toFixed(1);
+    const color = riskColor(score ?? 0);
+    const fs = size * 0.22;
+    return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${sw}"/>
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}"
+        stroke-dasharray="${d} ${c.toFixed(1)}"
+        transform="rotate(-90 ${cx} ${cy})" stroke-linecap="round"/>
+      <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="central"
+        font-family="Inter,system-ui,sans-serif" font-size="${fs}" font-weight="700"
+        fill="${color}">${score ?? '—'}</text>
+    </svg>`;
+  }
+
+  // ── Score bar row ─────────────────────────────────────────────────────────
+  function barRow(label, score) {
+    const c = riskColor(score ?? 0);
+    return `<div class="bar-row">
+      <span class="bar-label">${label}</span>
+      <div class="bar-track"><div class="bar-fill" style="width:${score ?? 0}%;background:${c}"></div></div>
+      <span class="bar-value" style="color:${c}">${score ?? '—'}</span>
+    </div>`;
+  }
+
+  // ── TABC license description ──────────────────────────────────────────────
+  const TABC_LABELS = { MB:'Mixed Beverage (Full Bar)', BG:'Beer & Wine (Table Service)', BQ:'Beer & Wine (Off-Premise)', P:"Caterer's Permit" };
+  function tabcDesc(type) {
+    return type ? `${type} — ${TABC_LABELS[type] || 'Licensed'}` : '—';
+  }
+
+  // ── Plain-English recommendation ──────────────────────────────────────────
+  function buildRec(data) {
+    const o   = data.score.overallScore;
+    const ops = data.score.operationalScore;
+    const vel = data.score.reviewVelocityScore;
+    const rat = data.score.ratingTrendScore;
+
+    let main;
+    if      (o >= 90) main = 'Strong health indicators across all signal categories. This restaurant meets criteria for standard credit terms or equipment financing with minimal additional review.';
+    else if (o >= 80) main = 'Solid operational signals with minor areas to monitor. Suitable for standard credit terms. Recommend routine re-scoring in 90 days.';
+    else if (o >= 70) main = 'Generally healthy operation with some risk factors present. Standard credit due diligence recommended before extending net terms.';
+    else if (o >= 60) main = 'Mixed signals detected. Elevated risk profile — review inspection records and licensing status before extending credit or equipment financing.';
+    else if (o >= 40) main = 'Multiple risk indicators present. Significant caution advised. Consider requiring personal guarantee or reducing credit line exposure.';
+    else              main = 'High-risk signals across multiple categories. Credit extension not recommended without substantial collateral. Consider cash-only account terms.';
+
+    const notes = [];
+    if (ops != null && ops < 70) notes.push('Operational records (inspections, licensing, hours coverage) warrant closer manual review.');
+    if (vel != null && vel < 50) notes.push('Customer traffic volume is below typical DFW market benchmarks.');
+    if (rat != null && rat < 65) notes.push('Customer ratings are trending below DFW market average.');
+    return { main, notes };
+  }
+
+  // ── Date formatting ───────────────────────────────────────────────────────
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function fmtShort(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // ── Render full result card ───────────────────────────────────────────────
+  function renderResult(data) {
+    const s      = data.score;
+    const d      = data.details || {};
+    const o      = s.overallScore;
+    const isPinned = pinned.includes(data.id);
+    const pinFull  = pinned.length === 2 && !isPinned;
+    const rec    = buildRec(data);
+
+    const addrLine = [data.address, data.city, data.state, data.zip].filter(Boolean).join(', ');
+    const sublabel = [
+      d.googleReviews ? `${d.googleReviews.toLocaleString()} reviews` : null,
+      d.inspectionScore != null ? `${d.inspectionScore}/100 inspection` : null,
+      d.tabcLicenseType ? `${d.tabcLicenseType} license` : null,
+    ].filter(Boolean).join(' · ');
+
+    return `
+      <div class="result-header">
+        <div>
+          <div class="result-name">${data.name}</div>
+          <div class="result-address">${addrLine}</div>
+        </div>
+        <button class="btn-pin ${isPinned ? 'pinned' : ''}"
+          ${pinFull ? 'disabled' : ''}
+          id="pin-btn-${data.id}"
+          onclick="togglePin('${data.id}')">
+          ${isPinned ? '✓ Pinned' : pinFull ? 'Compare full' : '⊕ Pin to Compare'}
+        </button>
+      </div>
+
+      <div class="score-overview" style="background:${riskBg(o)};border-color:${riskBorder(o)}">
+        <div class="score-ring-wrap">${scoreRing(o, 92)}</div>
+        <div class="score-overview-text">
+          <div class="risk-badge" style="color:${riskColor(o)};border-color:${riskColor(o)}">${riskLabel(o)}</div>
+          <div class="score-main-label">Overall Score</div>
+          ${sublabel ? `<div class="score-sublabel">${sublabel}</div>` : ''}
+        </div>
+      </div>
+
+      <div class="section-label">Score Breakdown</div>
+      <div class="bars">
+        ${barRow('Review Velocity', s.reviewVelocityScore)}
+        ${barRow('Rating Trend', s.ratingTrendScore)}
+        ${barRow('Operational Health', s.operationalScore)}
+      </div>
+
+      <div class="section-label">Signal Details</div>
+      <div class="details-grid">
+        <div class="detail-item">
+          <span class="detail-key">Google Rating</span>
+          <span class="detail-val">${d.googleRating ? `${d.googleRating} ★` : '—'}${d.googleReviews ? ` <span class="sub">(${d.googleReviews.toLocaleString()} reviews)</span>` : ''}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-key">Health Inspection</span>
+          <span class="detail-val">${d.inspectionScore != null ? `${d.inspectionScore}/100` : '—'}${d.inspectionDate ? ` <span class="sub">· ${d.inspectionDate}</span>` : ''}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-key">TABC License</span>
+          <span class="detail-val">${tabcDesc(d.tabcLicenseType)}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-key">Hours on File</span>
+          <span class="detail-val">${d.hoursCompleteness != null ? `${d.hoursCompleteness}% <span class="sub">(${Math.round(d.hoursCompleteness / 100 * 7)}/7 days)</span>` : '—'}</span>
+        </div>
+      </div>
+
+      <div class="section-label">Assessment</div>
+      <div class="rec-box" style="border-left-color:${riskColor(o)}">
+        <p class="rec-text">${rec.main}</p>
+        ${rec.notes.map(n => `<p class="rec-note">⚠ ${n}</p>`).join('')}
+      </div>
+
+      <div class="scored-at">Scored ${fmtDate(s.scoredAt)}</div>
+    `;
+  }
+
+  // ── Render compact compare column ─────────────────────────────────────────
+  function renderCompareCol(data, index) {
+    const s   = data.score;
+    const d   = data.details || {};
+    const o   = s.overallScore;
+    const rec = buildRec(data);
+    const addrLine = [data.address, data.city].filter(Boolean).join(', ');
+
+    return `
+      <div class="compare-col">
+        <button class="btn-unpin" onclick="unpin(${index})">✕ Remove</button>
+        <div class="compare-col-name">${data.name}</div>
+        <div class="compare-col-address">${addrLine}</div>
+
+        <div class="compare-score-row">
+          ${scoreRing(o, 72)}
+          <div>
+            <div class="risk-badge" style="color:${riskColor(o)};border-color:${riskColor(o)}">${riskLabel(o)}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px">Overall Score</div>
+          </div>
+        </div>
+
+        <div class="bars" style="margin-bottom:16px">
+          ${barRow('Review Velocity', s.reviewVelocityScore)}
+          ${barRow('Rating Trend', s.ratingTrendScore)}
+          ${barRow('Operational Health', s.operationalScore)}
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px">
+          <div class="detail-item"><span class="detail-key">Google Rating</span><span class="detail-val">${d.googleRating ? `${d.googleRating} ★` : '—'}${d.googleReviews ? ` <span class="sub">(${d.googleReviews.toLocaleString()})</span>` : ''}</span></div>
+          <div class="detail-item"><span class="detail-key">Health Inspection</span><span class="detail-val">${d.inspectionScore != null ? `${d.inspectionScore}/100` : '—'}${d.inspectionDate ? ` <span class="sub">· ${d.inspectionDate}</span>` : ''}</span></div>
+          <div class="detail-item"><span class="detail-key">TABC License</span><span class="detail-val">${tabcDesc(d.tabcLicenseType)}</span></div>
+        </div>
+
+        <div class="rec-box" style="border-left-color:${riskColor(o)};margin-bottom:0">
+          <p class="rec-text" style="font-size:13px">${rec.main}</p>
+          ${rec.notes.map(n => `<p class="rec-note" style="font-size:12px">⚠ ${n}</p>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  // ── Pin / unpin logic ─────────────────────────────────────────────────────
+  function togglePin(id) {
+    if (pinned.includes(id)) {
+      pinned = pinned.filter(p => p !== id);
+    } else if (pinned.length < 2) {
+      pinned.push(id);
+    }
+    refreshUI();
+  }
+
+  function unpin(index) {
+    pinned.splice(index, 1);
+    refreshUI();
+  }
+
+  function clearCompare() {
+    pinned = [];
+    refreshUI();
+  }
+
+  // ── Recent list ───────────────────────────────────────────────────────────
+  function addToRecent(data) {
+    recent = recent.filter(r => r.id !== data.id);
+    recent.unshift({
+      id: data.id, name: data.name,
+      address: data.address, city: data.city,
+      overallScore: data.score.overallScore,
+      scoredAt: data.score.scoredAt,
+    });
+    recent = recent.slice(0, 5);
+    try { localStorage.setItem('bh_recent', JSON.stringify(recent)); } catch {}
+  }
+
+  function renderRecent() {
+    const el = document.getElementById('recent-container');
+    if (!recent.length) {
+      el.innerHTML = '<div class="recent-empty">No restaurants scored yet in this session.</div>';
+      return;
+    }
+    el.innerHTML = `<div class="recent-list">${recent.map(r => {
+      const c = riskColor(r.overallScore);
+      const bg = riskBg(r.overallScore);
+      return `<div class="recent-row" onclick="loadRecent('${r.id}')">
+        <div class="recent-score-badge" style="background:${bg};color:${c}">${r.overallScore}</div>
+        <div>
+          <div class="recent-name">${r.name}</div>
+          <div class="recent-address">${[r.address, r.city].filter(Boolean).join(', ')}</div>
+        </div>
+        <div class="recent-date">${fmtShort(r.scoredAt)}</div>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  function loadRecent(id) {
+    const data = cache[id];
+    if (!data) return;
+    document.getElementById('result-inner').innerHTML = renderResult(data);
+    document.getElementById('result-section').classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ── Refresh all dynamic UI sections ──────────────────────────────────────
+  function refreshUI() {
+    // Hint bar: show when exactly 1 is pinned
+    document.getElementById('hint-bar').classList.toggle('hidden', pinned.length !== 1);
+
+    // Compare section: show when 2 are pinned
+    const cmp = document.getElementById('compare-section');
+    if (pinned.length === 2) {
+      cmp.classList.remove('hidden');
+      document.getElementById('compare-grid').innerHTML =
+        renderCompareCol(cache[pinned[0]], 0) + renderCompareCol(cache[pinned[1]], 1);
+    } else {
+      cmp.classList.add('hidden');
+    }
+
+    // Re-render result card pin button if currently showing
+    const resultSection = document.getElementById('result-section');
+    if (!resultSection.classList.contains('hidden')) {
+      // Find which restaurant is in the result card (look for any pin button)
+      const btn = document.querySelector('#result-inner [id^="pin-btn-"]');
+      if (btn) {
+        const id = btn.id.replace('pin-btn-', '');
+        if (cache[id]) document.getElementById('result-inner').innerHTML = renderResult(cache[id]);
+      }
+    }
+
+    renderRecent();
+  }
+
+  // ── Search ────────────────────────────────────────────────────────────────
+  async function doSearch() {
+    const name    = document.getElementById('inp-name').value.trim();
+    const address = document.getElementById('inp-address').value.trim();
+    const city    = document.getElementById('inp-city').value.trim() || 'Dallas';
+    const status  = document.getElementById('search-status');
+    const btn     = document.getElementById('btn-search');
+
+    if (!name) { setStatus('Please enter a restaurant name.', true); return; }
+
+    setStatus('Searching…', false);
+    btn.disabled = true;
+
+    try {
+      const resp = await fetch(`${API}/api/v1/restaurants/search-and-score`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ name, address, city }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message || `Server returned ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      cache[data.id] = data;
+      addToRecent(data);
+
+      document.getElementById('result-inner').innerHTML = renderResult(data);
+      document.getElementById('result-section').classList.remove('hidden');
+
+      setStatus('', false);
+      refreshUI();
+      document.getElementById('result-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      setStatus(e.message, true);
+      document.getElementById('result-section').classList.add('hidden');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function setStatus(msg, isError) {
+    const el = document.getElementById('search-status');
+    el.textContent  = msg;
+    el.className    = 'search-status' + (isError ? ' error' : '');
+  }
+
+  // Enter key in any input triggers search
+  document.querySelectorAll('#inp-name, #inp-address, #inp-city').forEach(el =>
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); })
+  );
+
+  // Render any cached recent list from previous session
+  renderRecent();
+</script>
+</body>
+</html>
