@@ -27,7 +27,6 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// UseCors before UseExceptionHandler so CORS headers are present on error responses too.
 app.UseCors();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
@@ -122,36 +121,52 @@ app.MapGet("/api/v1/restaurants/{id:guid}/score", async (Guid id, BizHealthDbCon
 });
 
 // POST /api/v1/restaurants/search-and-score
-// Fuzzy name search with address as the primary disambiguation field.
-// Returns the cached score and signal details for display in the demo UI.
-// If the restaurant is not in the system, returns 404 — onboarding is a separate pipeline.
+// Accepts name+address+city or restaurantId directly.
+// Returns disambiguation list when name matches multiple restaurants.
+// Returns cached score with score_factors and full raw evidence for the demo UI.
 app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, BizHealthDbContext db) =>
 {
-    if (string.IsNullOrWhiteSpace(req.Name))
-        return Results.BadRequest(new { message = "Name is required." });
+    BizHealthApi.Models.Restaurant? restaurant;
 
-    var candidates = await db.Restaurants
-        .Where(r => EF.Functions.ILike(r.Name, $"%{req.Name}%"))
-        .ToListAsync();
+    if (req.RestaurantId.HasValue)
+    {
+        // Direct lookup — used when the UI selects from the disambiguation list.
+        restaurant = await db.Restaurants.FindAsync(req.RestaurantId.Value);
+        if (restaurant is null)
+            return Results.NotFound(new { message = "Restaurant not found." });
+    }
+    else
+    {
+        if (string.IsNullOrWhiteSpace(req.Name))
+            return Results.BadRequest(new { message = "Name is required." });
 
-    if (!candidates.Any())
-        return Results.NotFound(new { message = $"No restaurant found matching \"{req.Name}\". Check the name and try again." });
+        var candidates = await db.Restaurants
+            .Where(r => EF.Functions.ILike(r.Name, $"%{req.Name}%"))
+            .ToListAsync();
 
-    // Use address as the primary disambiguation signal when multiple candidates share a name.
-    // Score each candidate by how many meaningful words from the input address it contains.
-    var restaurant = candidates
-        .OrderByDescending(r =>
+        if (!candidates.Any())
+            return Results.NotFound(new { message = $"No restaurant found matching \"{req.Name}\". Check the name and try again." });
+
+        // Multiple matches → return disambiguation list so the UI can let the user pick.
+        if (candidates.Count > 1)
         {
-            if (string.IsNullOrEmpty(req.Address) || r.Address is null) return 0;
-            return req.Address
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Where(w => w.Length > 2)
-                .Count(w => r.Address.Contains(w, StringComparison.OrdinalIgnoreCase));
-        })
-        .ThenByDescending(r =>
-            !string.IsNullOrEmpty(req.City) && r.City is not null &&
-            r.City.Equals(req.City, StringComparison.OrdinalIgnoreCase) ? 1 : 0)
-        .First();
+            return Results.Ok(new
+            {
+                disambiguation = true,
+                candidates = candidates.Select(c => new
+                {
+                    id      = c.Id,
+                    name    = c.Name,
+                    address = c.Address,
+                    city    = c.City,
+                    state   = c.State,
+                    zip     = c.Zip,
+                }).ToList(),
+            });
+        }
+
+        restaurant = candidates[0];
+    }
 
     var score = await db.HealthScores
         .Where(h => h.RestaurantId == restaurant.Id)
@@ -161,31 +176,32 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
     if (score is null)
         return Results.NotFound(new { message = $"\"{restaurant.Name}\" is in the system but has not been scored yet." });
 
-    // Fetch the most recent raw signal payload for each source shown in the demo UI.
-    var gpRaw = await db.RawSignals
-        .Where(s => s.RestaurantId == restaurant.Id && s.Source == "google_places")
-        .OrderByDescending(s => s.ScrapedAt).Select(s => s.Payload).FirstOrDefaultAsync();
+    // Parse score_factors from JSONB column.
+    JsonElement? scoreFactors = null;
+    if (score.ScoreFactors is not null)
+    {
+        using var sfDoc = JsonDocument.Parse(score.ScoreFactors);
+        scoreFactors = sfDoc.RootElement.Clone();
+    }
 
-    var hiRaw = await db.RawSignals
-        .Where(s => s.RestaurantId == restaurant.Id && s.Source == "health_inspections")
-        .OrderByDescending(s => s.ScrapedAt).Select(s => s.Payload).FirstOrDefaultAsync();
+    // Fetch latest raw signal payloads + scraped timestamps for all sources.
+    var gpInfo  = await db.RawSignals.Where(s => s.RestaurantId == restaurant.Id && s.Source == "google_places")
+                    .OrderByDescending(s => s.ScrapedAt).Select(s => new { s.Payload, s.ScrapedAt }).FirstOrDefaultAsync();
+    var fsqInfo = await db.RawSignals.Where(s => s.RestaurantId == restaurant.Id && s.Source == "foursquare")
+                    .OrderByDescending(s => s.ScrapedAt).Select(s => new { s.Payload, s.ScrapedAt }).FirstOrDefaultAsync();
+    var hiInfo  = await db.RawSignals.Where(s => s.RestaurantId == restaurant.Id && s.Source == "health_inspections")
+                    .OrderByDescending(s => s.ScrapedAt).Select(s => new { s.Payload, s.ScrapedAt }).FirstOrDefaultAsync();
+    var tlInfo  = await db.RawSignals.Where(s => s.RestaurantId == restaurant.Id && s.Source == "tabc_license")
+                    .OrderByDescending(s => s.ScrapedAt).Select(s => new { s.Payload, s.ScrapedAt }).FirstOrDefaultAsync();
+    var hmInfo  = await db.RawSignals.Where(s => s.RestaurantId == restaurant.Id && s.Source == "hours_monitor")
+                    .OrderByDescending(s => s.ScrapedAt).Select(s => new { s.Payload, s.ScrapedAt }).FirstOrDefaultAsync();
 
-    var tlRaw = await db.RawSignals
-        .Where(s => s.RestaurantId == restaurant.Id && s.Source == "tabc_license")
-        .OrderByDescending(s => s.ScrapedAt).Select(s => s.Payload).FirstOrDefaultAsync();
-
-    var hmRaw = await db.RawSignals
-        .Where(s => s.RestaurantId == restaurant.Id && s.Source == "hours_monitor")
-        .OrderByDescending(s => s.ScrapedAt).Select(s => s.Payload).FirstOrDefaultAsync();
-
-    // Parse JSONB payloads — stored as raw JSON strings in the RawSignal.Payload column.
-    // JsonDocument.Parse is used here instead of a typed model because the JSONB schema
-    // varies per source and we only need a handful of leaf values.
+    // ── Level 1 details (summary values shown without expansion) ──────────────
     double? googleRating  = null;
     int?    googleReviews = null;
-    if (gpRaw is not null)
+    if (gpInfo?.Payload is not null)
     {
-        using var doc = JsonDocument.Parse(gpRaw);
+        using var doc = JsonDocument.Parse(gpInfo.Payload);
         var result = doc.RootElement.GetProperty("result");
         if (result.TryGetProperty("rating",             out var rv)) googleRating  = rv.GetDouble();
         if (result.TryGetProperty("user_ratings_total", out var rc)) googleReviews = rc.GetInt32();
@@ -193,14 +209,13 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
 
     int?    inspectionScore = null;
     string? inspectionDate  = null;
-    if (hiRaw is not null)
+    if (hiInfo?.Payload is not null)
     {
-        using var doc     = JsonDocument.Parse(hiRaw);
+        using var doc     = JsonDocument.Parse(hiInfo.Payload);
         var       records = doc.RootElement.GetProperty("records");
         if (records.GetArrayLength() > 0)
         {
             var first = records[0];
-            // Socrata returns inspection score as a numeric string — parse defensively.
             if (first.TryGetProperty("score",     out var sv)) inspectionScore = (int)double.Parse(sv.GetString() ?? "0");
             if (first.TryGetProperty("insp_date", out var dv)) inspectionDate  = dv.GetString()?[..10];
         }
@@ -208,9 +223,9 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
 
     string? tabcLicenseType = null;
     string? tabcOwner       = null;
-    if (tlRaw is not null)
+    if (tlInfo?.Payload is not null)
     {
-        using var doc     = JsonDocument.Parse(tlRaw);
+        using var doc     = JsonDocument.Parse(tlInfo.Payload);
         var       records = doc.RootElement.GetProperty("records");
         if (records.GetArrayLength() > 0)
         {
@@ -221,11 +236,79 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
     }
 
     int? hoursCompleteness = null;
-    if (hmRaw is not null)
+    if (hmInfo?.Payload is not null)
     {
-        using var doc = JsonDocument.Parse(hmRaw);
+        using var doc = JsonDocument.Parse(hmInfo.Payload);
         if (doc.RootElement.TryGetProperty("hours_completeness", out var hv))
             hoursCompleteness = hv.GetInt32();
+    }
+
+    // ── Level 3 evidence (raw data for drill-down) ────────────────────────────
+
+    // Inspection records: all historical records (date, score, violation count).
+    var inspectionRecords = new List<object>();
+    if (hiInfo?.Payload is not null)
+    {
+        using var doc = JsonDocument.Parse(hiInfo.Payload);
+        if (doc.RootElement.TryGetProperty("records", out var recs))
+        {
+            foreach (var rec in recs.EnumerateArray().Take(10))
+            {
+                string iDate = "";
+                if (rec.TryGetProperty("insp_date", out var dv)) iDate = dv.GetString()?[..10] ?? "";
+
+                int iScore = 0;
+                if (rec.TryGetProperty("score", out var sv))
+                {
+                    var raw = sv.GetString() ?? "0";
+                    iScore = (int)double.Parse(raw);
+                }
+
+                int violations = rec.EnumerateObject()
+                    .Count(p => p.Name.StartsWith("violation") && p.Name.EndsWith("_text"));
+
+                inspectionRecords.Add(new { date = iDate, score = iScore, violations });
+            }
+        }
+    }
+
+    // TABC evidence: license number, entity, trade name, type.
+    object? tabcEvidence = null;
+    if (tlInfo?.Payload is not null)
+    {
+        using var doc = JsonDocument.Parse(tlInfo.Payload);
+        if (doc.RootElement.TryGetProperty("records", out var recs) && recs.GetArrayLength() > 0)
+        {
+            var first = recs[0];
+            string? licNum = null, entityName = null, tradeName = null, licType = null;
+            if (first.TryGetProperty("legacylicensenumber", out var ln)) licNum     = ln.GetString();
+            if (first.TryGetProperty("aimsownername",       out var en)) entityName = en.GetString();
+            if (first.TryGetProperty("aimstradename",       out var tn)) tradeName  = tn.GetString();
+            if (first.TryGetProperty("aimslicensetype",     out var lt)) licType    = lt.GetString();
+            tabcEvidence = new { licenseNumber = licNum, entityName, tradeName, licenseType = licType, status = "Active" };
+        }
+    }
+
+    // Foursquare evidence: rating + scraped date.
+    double? fsqRating = null;
+    if (fsqInfo?.Payload is not null)
+    {
+        using var doc = JsonDocument.Parse(fsqInfo.Payload);
+        if (doc.RootElement.TryGetProperty("details", out var details) &&
+            details.TryGetProperty("rating", out var fr))
+            fsqRating = fr.GetDouble();
+    }
+
+    // Hours evidence: weekday text lines.
+    List<string>? weekdayText  = null;
+    int?          daysWithHours = null;
+    if (hmInfo?.Payload is not null)
+    {
+        using var doc = JsonDocument.Parse(hmInfo.Payload);
+        if (doc.RootElement.TryGetProperty("weekday_text", out var wt))
+            weekdayText = wt.EnumerateArray().Select(e => e.GetString() ?? "").ToList();
+        if (doc.RootElement.TryGetProperty("days_with_hours", out var dwh))
+            daysWithHours = dwh.GetInt32();
     }
 
     return Results.Ok(new
@@ -244,6 +327,7 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             operationalScore    = score.OperationalScore,
             staffingScore       = score.StaffingScore,
             scoredAt            = score.ScoredAt,
+            scoreFactors,
         },
         details = new
         {
@@ -255,9 +339,31 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             tabcOwner,
             hoursCompleteness,
         },
+        evidence = new
+        {
+            inspectionRecords,
+            tabc = tabcEvidence,
+            google = gpInfo is null ? null : new
+            {
+                rating      = googleRating,
+                reviewCount = googleReviews,
+                scrapedAt   = gpInfo.ScrapedAt,
+            },
+            foursquare = fsqInfo is null ? null : new
+            {
+                rating    = fsqRating,
+                scrapedAt = fsqInfo.ScrapedAt,
+            },
+            hours = hmInfo is null ? null : new
+            {
+                weekdayText,
+                daysWithHours,
+                scrapedAt = hmInfo.ScrapedAt,
+            },
+        },
     });
 });
 
 app.Run();
 
-record SearchRequest(string Name, string? Address, string? City);
+record SearchRequest(string? Name, string? Address, string? City, Guid? RestaurantId);

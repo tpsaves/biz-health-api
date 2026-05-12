@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS health_scores (
     operational_score     INT,
     staffing_score        INT,
     overall_score         INT,
+    score_factors         JSONB,
     scored_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

@@ -101,7 +101,8 @@
     .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
     .form-group { display: flex; flex-direction: column; gap: 5px; }
     .form-group label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-    .form-group input {
+    .form-group input,
+    .form-group select {
       height: 42px; padding: 0 13px;
       border: 1.5px solid var(--border);
       border-radius: 8px;
@@ -109,14 +110,15 @@
       background: var(--surface);
       transition: border-color .15s, box-shadow .15s;
     }
-    .form-group input:focus {
+    .form-group input:focus,
+    .form-group select:focus {
       outline: none;
       border-color: var(--brand-mid);
       box-shadow: 0 0 0 3px rgba(29,78,216,.12);
     }
     .fg-name    { flex: 2; min-width: 180px; }
     .fg-address { flex: 3; min-width: 220px; }
-    .fg-city    { flex: 1; min-width: 120px; }
+    .fg-city    { flex: 1; min-width: 140px; }
     .search-actions { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
     .btn-primary {
       height: 42px; padding: 0 22px;
@@ -142,6 +144,21 @@
       font-weight: 500;
     }
 
+    /* ── Disambiguation list ─────────────────────────────────────────────── */
+    .disambig-heading { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .disambig-sub     { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+    .disambig-list    { display: flex; flex-direction: column; gap: 8px; }
+    .disambig-row {
+      display: flex; align-items: center; gap: 14px;
+      padding: 12px 16px;
+      border: 1.5px solid var(--border); border-radius: 8px;
+      cursor: pointer; transition: border-color .12s, background .12s;
+    }
+    .disambig-row:hover { border-color: var(--brand-mid); background: var(--brand-lt); }
+    .disambig-name    { font-size: 14px; font-weight: 600; }
+    .disambig-address { font-size: 12px; color: var(--muted); }
+    .disambig-arrow   { margin-left: auto; color: var(--brand-mid); font-size: 18px; }
+
     /* ── Result card ─────────────────────────────────────────────────────── */
     .result-header {
       display: flex;
@@ -153,7 +170,6 @@
     .result-name    { font-size: 22px; font-weight: 700; line-height: 1.2; }
     .result-address { font-size: 13px; color: var(--muted); margin-top: 4px; }
 
-    /* Pin button */
     .btn-pin {
       height: 36px; padding: 0 16px;
       border: 1.5px solid var(--border);
@@ -167,7 +183,6 @@
     .btn-pin.pinned   { background: var(--green-bg); border-color: var(--green); color: var(--green); }
     .btn-pin:disabled { opacity: .45; cursor: not-allowed; }
 
-    /* Score overview band */
     .score-overview {
       display: flex; align-items: center; gap: 20px;
       padding: 18px 20px; border-radius: 10px; margin-bottom: 24px;
@@ -184,23 +199,101 @@
     .score-main-label { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
     .score-sublabel   { font-size: 12px; color: var(--muted); line-height: 1.4; }
 
-    /* Section label */
     .section-label {
       font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px;
       color: var(--muted); margin-bottom: 10px;
     }
 
-    /* Score bars */
-    .bars { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
-    .bar-row { display: flex; align-items: center; gap: 12px; }
+    /* ── Score bars — Level 1 & 2 ────────────────────────────────────────── */
+    .bars { display: flex; flex-direction: column; gap: 2px; margin-bottom: 24px; }
+
+    .component-block { display: flex; flex-direction: column; }
+
+    .bar-row-header {
+      display: flex; align-items: center; gap: 12px;
+      cursor: pointer; padding: 8px 6px; border-radius: 8px;
+      transition: background .1s;
+    }
+    .bar-row-header:hover { background: var(--bg); }
+
     .bar-label { width: 150px; font-size: 13px; color: var(--muted); flex-shrink: 0; }
     .bar-track {
       flex: 1; height: 8px; background: var(--border); border-radius: 99px; overflow: hidden;
     }
     .bar-fill { height: 100%; border-radius: 99px; transition: width .4s ease; }
     .bar-value { width: 36px; text-align: right; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+    .bar-chevron {
+      font-size: 9px; color: var(--muted); flex-shrink: 0; width: 14px; text-align: center;
+      transition: transform .2s;
+    }
+    .bar-chevron.open { transform: rotate(90deg); }
 
-    /* Signal details */
+    /* ── Level 2: Factor rows ────────────────────────────────────────────── */
+    .factors-panel {
+      margin: 0 0 4px 168px;
+      border-left: 2px solid var(--border);
+      padding: 4px 0 4px 14px;
+    }
+    .factor-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 4px 0;
+      font-size: 13px;
+    }
+    .factor-impact {
+      width: 18px; text-align: center; font-size: 14px; flex-shrink: 0;
+      font-weight: 600;
+    }
+    .factor-impact.positive { color: var(--green); }
+    .factor-impact.neutral  { color: var(--muted); }
+    .factor-impact.negative { color: var(--red); }
+    .factor-label { flex: 1; color: var(--text); }
+    .factor-value { font-weight: 500; min-width: 90px; color: var(--text); text-align: right; }
+    .factor-date  { color: var(--muted); font-size: 12px; min-width: 65px; text-align: right; }
+
+    /* ── Level 3: Raw evidence ───────────────────────────────────────────── */
+    .evidence-toggle {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; color: var(--brand-mid); cursor: pointer;
+      margin-top: 6px; padding: 2px 0;
+      background: none; border: none; font-family: inherit; font-weight: 500;
+    }
+    .evidence-toggle:hover { text-decoration: underline; }
+
+    .evidence-panel {
+      margin-top: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 13px;
+    }
+    .evidence-subtitle {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .5px; color: var(--muted); margin-bottom: 8px;
+    }
+    .evidence-table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+    .evidence-table th {
+      font-weight: 600; color: var(--muted); font-size: 11px;
+      text-transform: uppercase; letter-spacing: .5px;
+      padding: 4px 10px 4px 0; border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .evidence-table td {
+      padding: 5px 10px 5px 0; border-bottom: 1px solid var(--border);
+      color: var(--text); vertical-align: middle;
+    }
+    .evidence-table tr:last-child td { border-bottom: none; }
+    .ev-score-chip {
+      display: inline-block; padding: 1px 7px; border-radius: 12px;
+      font-weight: 600; font-size: 12px;
+    }
+    .evidence-kv { display: flex; gap: 10px; margin-bottom: 5px; }
+    .evidence-key { font-weight: 600; color: var(--muted); min-width: 120px; flex-shrink: 0; }
+    .evidence-val { color: var(--text); }
+    .evidence-hours { font-size: 12px; color: var(--muted); line-height: 1.7; }
+    .evidence-sep { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+
+    /* ── Signal details (Level 1 grid) ───────────────────────────────────── */
     .details-grid {
       display: grid; grid-template-columns: 1fr 1fr;
       gap: 10px; margin-bottom: 24px;
@@ -213,7 +306,7 @@
     .detail-val { font-size: 13px; font-weight: 500; color: var(--text); }
     .detail-val .sub { font-weight: 400; color: var(--muted); }
 
-    /* Recommendation box */
+    /* ── Recommendation box ──────────────────────────────────────────────── */
     .rec-box {
       border-left: 4px solid var(--border);
       padding: 14px 16px;
@@ -239,10 +332,17 @@
     .compare-col {
       border: 1px solid var(--border); border-radius: 10px;
       padding: 20px; position: relative;
+      display: flex; flex-direction: column; gap: 0;
     }
     .compare-col-name    { font-size: 17px; font-weight: 700; margin-bottom: 2px; }
     .compare-col-address { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
     .compare-score-row   { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+    .compare-diff-badge {
+      font-size: 11px; font-weight: 700; padding: 2px 8px;
+      border-radius: 10px; margin-left: 6px;
+    }
+    .compare-diff-better { background: var(--green-bg); color: var(--green); }
+    .compare-diff-worse  { background: var(--red-bg);   color: var(--red);   }
     .btn-unpin {
       position: absolute; top: 14px; right: 14px;
       height: 28px; padding: 0 10px;
@@ -294,16 +394,27 @@
     <div class="search-heading">Score a Restaurant</div>
     <div class="form-row">
       <div class="form-group fg-name">
-        <label>Restaurant Name</label>
+        <label>Restaurant Name <span style="font-weight:400;text-transform:none;letter-spacing:0">(required)</span></label>
         <input id="inp-name" type="text" placeholder="e.g. Pecan Lodge" autocomplete="off">
       </div>
       <div class="form-group fg-address">
-        <label>Address <span style="font-weight:400;text-transform:none;letter-spacing:0">(used to disambiguate)</span></label>
+        <label>Address <span style="font-weight:400;text-transform:none;letter-spacing:0">(helps disambiguate)</span></label>
         <input id="inp-address" type="text" placeholder="e.g. 2702 Main St">
       </div>
       <div class="form-group fg-city">
         <label>City</label>
-        <input id="inp-city" type="text" value="Dallas">
+        <select id="inp-city">
+          <option value="Dallas"      selected>Dallas</option>
+          <option value="Fort Worth">Fort Worth</option>
+          <option value="Arlington">Arlington</option>
+          <option value="Plano">Plano</option>
+          <option value="Frisco">Frisco</option>
+          <option value="McKinney">McKinney</option>
+          <option value="Denton">Denton</option>
+          <option value="Irving">Irving</option>
+          <option value="Garland">Garland</option>
+          <option value="Grand Prairie">Grand Prairie</option>
+        </select>
       </div>
     </div>
     <div class="search-actions">
@@ -315,6 +426,11 @@
   <!-- Pin hint -->
   <div class="hint-bar hidden" id="hint-bar">
     1 restaurant pinned — search and pin a second restaurant to compare them side by side.
+  </div>
+
+  <!-- Disambiguation -->
+  <div class="hidden" id="disambig-section">
+    <div class="card" id="disambig-inner"></div>
   </div>
 
   <!-- Result -->
@@ -345,9 +461,9 @@
   const API = 'http://localhost:8080';
 
   // ── State ───────────────────────────────────────────────────────────────
-  const cache  = {};       // id → full API response
-  let   pinned = [];       // max 2 restaurant ids
-  let   recent = [];
+  const cache = {};   // id → full API response
+  let pinned  = [];   // max 2 restaurant ids
+  let recent  = [];
   try { recent = JSON.parse(localStorage.getItem('bh_recent') || '[]'); } catch {}
 
   // ── Risk helpers ─────────────────────────────────────────────────────────
@@ -395,17 +511,23 @@
     </svg>`;
   }
 
-  // ── Score bar row ─────────────────────────────────────────────────────────
-  function barRow(label, score) {
-    const c = riskColor(score ?? 0);
-    return `<div class="bar-row">
-      <span class="bar-label">${label}</span>
-      <div class="bar-track"><div class="bar-fill" style="width:${score ?? 0}%;background:${c}"></div></div>
-      <span class="bar-value" style="color:${c}">${score ?? '—'}</span>
-    </div>`;
+  // ── Date formatting ───────────────────────────────────────────────────────
+  function fmtDate(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function fmtShort(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function fmtShortDate(str) {
+    if (!str) return '';
+    // handles both ISO timestamps and YYYY-MM-DD strings
+    const d = new Date(str.length === 10 ? str + 'T12:00:00Z' : str);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
   }
 
-  // ── TABC license description ──────────────────────────────────────────────
+  // ── TABC license labels ───────────────────────────────────────────────────
   const TABC_LABELS = { MB:'Mixed Beverage (Full Bar)', BG:'Beer & Wine (Table Service)', BQ:'Beer & Wine (Off-Premise)', P:"Caterer's Permit" };
   function tabcDesc(type) {
     return type ? `${type} — ${TABC_LABELS[type] || 'Licensed'}` : '—';
@@ -433,31 +555,140 @@
     return { main, notes };
   }
 
-  // ── Date formatting ───────────────────────────────────────────────────────
-  function fmtDate(iso) {
-    if (!iso) return '—';
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  // ── Level 2: Factor rows ──────────────────────────────────────────────────
+  function renderFactorRows(factors) {
+    if (!factors || !factors.length)
+      return '<div style="color:var(--muted);font-size:12px;padding:6px 0">Score factors will appear after the next scrape cycle.</div>';
+    return factors.map(f => {
+      const icon  = f.impact === 'positive' ? '↑' : f.impact === 'negative' ? '↓' : '→';
+      const cls   = f.impact === 'positive' ? 'positive' : f.impact === 'negative' ? 'negative' : 'neutral';
+      const date  = f.date ? fmtShortDate(f.date) : '';
+      return `<div class="factor-row">
+        <span class="factor-impact ${cls}">${icon}</span>
+        <span class="factor-label">${f.label}</span>
+        <span class="factor-value">${f.value}</span>
+        <span class="factor-date">${date}</span>
+      </div>`;
+    }).join('');
   }
-  function fmtShort(iso) {
-    if (!iso) return '';
-    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  // ── Level 3: Evidence panels ──────────────────────────────────────────────
+  function scoreChip(s) {
+    return `<span class="ev-score-chip" style="background:${riskBg(s)};color:${riskColor(s)}">${s}/100</span>`;
+  }
+
+  function renderInspectionEvidence(ev) {
+    const recs = ev?.inspectionRecords;
+    const tabc = ev?.tabc;
+    let html = '';
+
+    if (recs && recs.length) {
+      html += `<div class="evidence-subtitle">Health Inspection History</div>
+        <table class="evidence-table">
+          <thead><tr><th>Date</th><th>Score</th><th>Violations</th></tr></thead>
+          <tbody>${recs.map(r => `<tr>
+            <td>${fmtShortDate(r.date)}</td>
+            <td>${scoreChip(r.score)}</td>
+            <td>${r.violations === 0 ? '<span style="color:var(--green)">None</span>' : r.violations}</td>
+          </tr>`).join('')}</tbody>
+        </table>`;
+    } else {
+      html += '<div style="color:var(--muted);margin-bottom:10px">No inspection records on file.</div>';
+    }
+
+    if (tabc) {
+      html += `<hr class="evidence-sep">
+        <div class="evidence-subtitle">TABC License</div>
+        ${tabc.licenseNumber ? `<div class="evidence-kv"><span class="evidence-key">License #</span><span class="evidence-val">${tabc.licenseNumber}</span></div>` : ''}
+        ${tabc.entityName    ? `<div class="evidence-kv"><span class="evidence-key">Entity</span><span class="evidence-val">${tabc.entityName}</span></div>` : ''}
+        ${tabc.tradeName     ? `<div class="evidence-kv"><span class="evidence-key">Trade name</span><span class="evidence-val">${tabc.tradeName}</span></div>` : ''}
+        ${tabc.licenseType   ? `<div class="evidence-kv"><span class="evidence-key">Type</span><span class="evidence-val">${tabcDesc(tabc.licenseType)}</span></div>` : ''}
+        <div class="evidence-kv"><span class="evidence-key">Status</span><span class="evidence-val" style="color:var(--green);font-weight:600">${tabc.status}</span></div>`;
+    }
+
+    return html || '<div style="color:var(--muted)">No data available.</div>';
+  }
+
+  function renderGoogleEvidence(ev) {
+    const g = ev?.google;
+    if (!g) return '<div style="color:var(--muted)">No Google data on file.</div>';
+    return `
+      <div class="evidence-subtitle">Google Places</div>
+      <div class="evidence-kv"><span class="evidence-key">Rating</span><span class="evidence-val">${g.rating != null ? `${g.rating} ★` : '—'}</span></div>
+      <div class="evidence-kv"><span class="evidence-key">Review count</span><span class="evidence-val">${g.reviewCount != null ? g.reviewCount.toLocaleString() : '—'}</span></div>
+      <div class="evidence-kv"><span class="evidence-key">Last scraped</span><span class="evidence-val">${g.scrapedAt ? fmtShort(g.scrapedAt) : '—'}</span></div>`;
+  }
+
+  function renderRatingEvidence(ev) {
+    const g = ev?.google;
+    const f = ev?.foursquare;
+    let html = renderGoogleEvidence(ev);
+    if (f && f.rating != null) {
+      html += `<hr class="evidence-sep">
+        <div class="evidence-subtitle">Foursquare</div>
+        <div class="evidence-kv"><span class="evidence-key">Rating</span><span class="evidence-val">${f.rating} / 10.0</span></div>
+        <div class="evidence-kv"><span class="evidence-key">Last scraped</span><span class="evidence-val">${f.scrapedAt ? fmtShort(f.scrapedAt) : '—'}</span></div>`;
+    }
+    return html;
+  }
+
+  // ── Component block (Level 1 bar + Level 2 factors + Level 3 evidence) ────
+  function componentBlock(id, ctx, label, score, factors, evidenceHtml) {
+    const c = riskColor(score ?? 0);
+    const elemId = `${id}-${ctx}`;
+    return `<div class="component-block">
+      <div class="bar-row-header" onclick="toggleComponent('${elemId}')">
+        <span class="bar-label">${label}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${score ?? 0}%;background:${c}"></div></div>
+        <span class="bar-value" style="color:${c}">${score ?? '—'}</span>
+        <span class="bar-chevron" id="chev-${elemId}">&#9658;</span>
+      </div>
+      <div class="factors-panel hidden" id="fac-${elemId}">
+        ${renderFactorRows(factors)}
+        ${evidenceHtml ? `
+          <button class="evidence-toggle" id="evtog-${elemId}" onclick="toggleEvidence('${elemId}')">&#9658; View raw data</button>
+          <div class="evidence-panel hidden" id="ev-${elemId}">${evidenceHtml}</div>
+        ` : ''}
+      </div>
+    </div>`;
+  }
+
+  function toggleComponent(elemId) {
+    const panel   = document.getElementById('fac-'  + elemId);
+    const chevron = document.getElementById('chev-' + elemId);
+    if (!panel) return;
+    const opening = panel.classList.toggle('hidden');
+    if (chevron) chevron.classList.toggle('open', !opening);
+  }
+
+  function toggleEvidence(elemId) {
+    const panel  = document.getElementById('ev-'    + elemId);
+    const toggle = document.getElementById('evtog-' + elemId);
+    if (!panel) return;
+    const nowHidden = panel.classList.toggle('hidden');
+    if (toggle) toggle.innerHTML = (nowHidden ? '&#9658;' : '&#9660;') + ' View raw data';
   }
 
   // ── Render full result card ───────────────────────────────────────────────
   function renderResult(data) {
-    const s      = data.score;
-    const d      = data.details || {};
-    const o      = s.overallScore;
-    const isPinned = pinned.includes(data.id);
-    const pinFull  = pinned.length === 2 && !isPinned;
-    const rec    = buildRec(data);
-
-    const addrLine = [data.address, data.city, data.state, data.zip].filter(Boolean).join(', ');
-    const sublabel = [
-      d.googleReviews ? `${d.googleReviews.toLocaleString()} reviews` : null,
+    const s       = data.score;
+    const d       = data.details || {};
+    const ev      = data.evidence || {};
+    const sf      = s.scoreFactors || {};
+    const o       = s.overallScore;
+    const isPinned  = pinned.includes(data.id);
+    const pinFull   = pinned.length === 2 && !isPinned;
+    const rec     = buildRec(data);
+    const addrLine  = [data.address, data.city, data.state, data.zip].filter(Boolean).join(', ');
+    const sublabel  = [
+      d.googleReviews   ? `${d.googleReviews.toLocaleString()} Google reviews` : null,
       d.inspectionScore != null ? `${d.inspectionScore}/100 inspection` : null,
       d.tabcLicenseType ? `${d.tabcLicenseType} license` : null,
     ].filter(Boolean).join(' · ');
+
+    const rvBlock = componentBlock(data.id, 'rv', 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, renderGoogleEvidence(ev));
+    const rtBlock = componentBlock(data.id, 'rt', 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    renderRatingEvidence(ev));
+    const opBlock = componentBlock(data.id, 'op', 'Operational Health', s.operationalScore,    sf.operational,    renderInspectionEvidence(ev));
 
     return `
       <div class="result-header">
@@ -482,12 +713,8 @@
         </div>
       </div>
 
-      <div class="section-label">Score Breakdown</div>
-      <div class="bars">
-        ${barRow('Review Velocity', s.reviewVelocityScore)}
-        ${barRow('Rating Trend', s.ratingTrendScore)}
-        ${barRow('Operational Health', s.operationalScore)}
-      </div>
+      <div class="section-label">Score Breakdown — click any bar to drill down</div>
+      <div class="bars">${rvBlock}${rtBlock}${opBlock}</div>
 
       <div class="section-label">Signal Details</div>
       <div class="details-grid">
@@ -511,25 +738,37 @@
 
       <div class="section-label">Assessment</div>
       <div class="rec-box" style="border-left-color:${riskColor(o)}">
+        <p class="rec-title">Credit Risk Assessment</p>
         <p class="rec-text">${rec.main}</p>
-        ${rec.notes.map(n => `<p class="rec-note">⚠ ${n}</p>`).join('')}
+        ${rec.notes.map(n => `<p class="rec-note">&#9888; ${n}</p>`).join('')}
       </div>
 
       <div class="scored-at">Scored ${fmtDate(s.scoredAt)}</div>
     `;
   }
 
-  // ── Render compact compare column ─────────────────────────────────────────
-  function renderCompareCol(data, index) {
+  // ── Compare: render a single column ──────────────────────────────────────
+  function renderCompareCol(data, index, diffs) {
     const s   = data.score;
-    const d   = data.details || {};
+    const sf  = s.scoreFactors || {};
+    const ev  = data.evidence || {};
     const o   = s.overallScore;
     const rec = buildRec(data);
     const addrLine = [data.address, data.city].filter(Boolean).join(', ');
 
+    function diffBadge(key) {
+      if (!diffs[key] || diffs[key].gap < 5) return '';
+      const better = diffs[key].winner === index;
+      return `<span class="compare-diff-badge ${better ? 'compare-diff-better' : 'compare-diff-worse'}">${better ? '+' : '-'}${diffs[key].gap}</span>`;
+    }
+
+    const rvBlock = componentBlock(data.id, `cmp${index}rv`, 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, renderGoogleEvidence(ev));
+    const rtBlock = componentBlock(data.id, `cmp${index}rt`, 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    renderRatingEvidence(ev));
+    const opBlock = componentBlock(data.id, `cmp${index}op`, 'Operational Health', s.operationalScore,    sf.operational,    renderInspectionEvidence(ev));
+
     return `
       <div class="compare-col">
-        <button class="btn-unpin" onclick="unpin(${index})">✕ Remove</button>
+        <button class="btn-unpin" onclick="unpin(${index})">&#x2715; Remove</button>
         <div class="compare-col-name">${data.name}</div>
         <div class="compare-col-address">${addrLine}</div>
 
@@ -537,31 +776,24 @@
           ${scoreRing(o, 72)}
           <div>
             <div class="risk-badge" style="color:${riskColor(o)};border-color:${riskColor(o)}">${riskLabel(o)}</div>
-            <div style="font-size:12px;color:var(--muted);margin-top:4px">Overall Score</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px">Overall ${diffBadge('overall')}</div>
           </div>
         </div>
 
-        <div class="bars" style="margin-bottom:16px">
-          ${barRow('Review Velocity', s.reviewVelocityScore)}
-          ${barRow('Rating Trend', s.ratingTrendScore)}
-          ${barRow('Operational Health', s.operationalScore)}
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:8px">
+          Score Breakdown ${diffBadge('rv') || diffBadge('rt') || diffBadge('op') ? '— differences highlighted' : ''}
         </div>
-
-        <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:16px">
-          <div class="detail-item"><span class="detail-key">Google Rating</span><span class="detail-val">${d.googleRating ? `${d.googleRating} ★` : '—'}${d.googleReviews ? ` <span class="sub">(${d.googleReviews.toLocaleString()})</span>` : ''}</span></div>
-          <div class="detail-item"><span class="detail-key">Health Inspection</span><span class="detail-val">${d.inspectionScore != null ? `${d.inspectionScore}/100` : '—'}${d.inspectionDate ? ` <span class="sub">· ${d.inspectionDate}</span>` : ''}</span></div>
-          <div class="detail-item"><span class="detail-key">TABC License</span><span class="detail-val">${tabcDesc(d.tabcLicenseType)}</span></div>
-        </div>
+        <div class="bars" style="margin-bottom:16px">${rvBlock}${rtBlock}${opBlock}</div>
 
         <div class="rec-box" style="border-left-color:${riskColor(o)};margin-bottom:0">
           <p class="rec-text" style="font-size:13px">${rec.main}</p>
-          ${rec.notes.map(n => `<p class="rec-note" style="font-size:12px">⚠ ${n}</p>`).join('')}
+          ${rec.notes.map(n => `<p class="rec-note" style="font-size:12px">&#9888; ${n}</p>`).join('')}
         </div>
       </div>
     `;
   }
 
-  // ── Pin / unpin logic ─────────────────────────────────────────────────────
+  // ── Pin / unpin ───────────────────────────────────────────────────────────
   function togglePin(id) {
     if (pinned.includes(id)) {
       pinned = pinned.filter(p => p !== id);
@@ -601,7 +833,7 @@
       return;
     }
     el.innerHTML = `<div class="recent-list">${recent.map(r => {
-      const c = riskColor(r.overallScore);
+      const c  = riskColor(r.overallScore);
       const bg = riskBg(r.overallScore);
       return `<div class="recent-row" onclick="loadRecent('${r.id}')">
         <div class="recent-score-badge" style="background:${bg};color:${c}">${r.overallScore}</div>
@@ -617,30 +849,38 @@
   function loadRecent(id) {
     const data = cache[id];
     if (!data) return;
+    document.getElementById('disambig-section').classList.add('hidden');
     document.getElementById('result-inner').innerHTML = renderResult(data);
     document.getElementById('result-section').classList.remove('hidden');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  // ── Refresh all dynamic UI sections ──────────────────────────────────────
+  // ── Refresh all dynamic sections ──────────────────────────────────────────
   function refreshUI() {
-    // Hint bar: show when exactly 1 is pinned
     document.getElementById('hint-bar').classList.toggle('hidden', pinned.length !== 1);
 
-    // Compare section: show when 2 are pinned
     const cmp = document.getElementById('compare-section');
     if (pinned.length === 2) {
       cmp.classList.remove('hidden');
-      document.getElementById('compare-grid').innerHTML =
-        renderCompareCol(cache[pinned[0]], 0) + renderCompareCol(cache[pinned[1]], 1);
+      const d0 = cache[pinned[0]];
+      const d1 = cache[pinned[1]];
+      if (d0 && d1) {
+        const diffs = {
+          overall: { winner: (d0.score.overallScore        ?? 0) >= (d1.score.overallScore        ?? 0) ? 0 : 1, gap: Math.abs((d0.score.overallScore        ?? 0) - (d1.score.overallScore        ?? 0)) },
+          rv:      { winner: (d0.score.reviewVelocityScore ?? 0) >= (d1.score.reviewVelocityScore ?? 0) ? 0 : 1, gap: Math.abs((d0.score.reviewVelocityScore ?? 0) - (d1.score.reviewVelocityScore ?? 0)) },
+          rt:      { winner: (d0.score.ratingTrendScore    ?? 0) >= (d1.score.ratingTrendScore    ?? 0) ? 0 : 1, gap: Math.abs((d0.score.ratingTrendScore    ?? 0) - (d1.score.ratingTrendScore    ?? 0)) },
+          op:      { winner: (d0.score.operationalScore    ?? 0) >= (d1.score.operationalScore    ?? 0) ? 0 : 1, gap: Math.abs((d0.score.operationalScore    ?? 0) - (d1.score.operationalScore    ?? 0)) },
+        };
+        document.getElementById('compare-grid').innerHTML =
+          renderCompareCol(d0, 0, diffs) + renderCompareCol(d1, 1, diffs);
+      }
     } else {
       cmp.classList.add('hidden');
     }
 
-    // Re-render result card pin button if currently showing
+    // Re-render result card to update pin button state.
     const resultSection = document.getElementById('result-section');
     if (!resultSection.classList.contains('hidden')) {
-      // Find which restaurant is in the result card (look for any pin button)
       const btn = document.querySelector('#result-inner [id^="pin-btn-"]');
       if (btn) {
         const id = btn.id.replace('pin-btn-', '');
@@ -651,12 +891,59 @@
     renderRecent();
   }
 
+  // ── Disambiguation ────────────────────────────────────────────────────────
+  function renderDisambig(candidates, searchName) {
+    return `
+      <div class="disambig-heading">Multiple matches for "${searchName}"</div>
+      <div class="disambig-sub">Select the correct restaurant to view its full score:</div>
+      <div class="disambig-list">
+        ${candidates.map(c => `
+          <div class="disambig-row" onclick="selectCandidate('${c.id}')">
+            <div>
+              <div class="disambig-name">${c.name}</div>
+              <div class="disambig-address">${[c.address, c.city, c.state, c.zip].filter(Boolean).join(', ')}</div>
+            </div>
+            <span class="disambig-arrow">&#8250;</span>
+          </div>
+        `).join('')}
+      </div>`;
+  }
+
+  async function selectCandidate(restaurantId) {
+    const btn = document.getElementById('btn-search');
+    setStatus('Loading…', false);
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`${API}/api/v1/restaurants/search-and-score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message || `Server returned ${resp.status}`);
+      }
+      const data = await resp.json();
+      cache[data.id] = data;
+      addToRecent(data);
+      document.getElementById('disambig-section').classList.add('hidden');
+      document.getElementById('result-inner').innerHTML = renderResult(data);
+      document.getElementById('result-section').classList.remove('hidden');
+      setStatus('', false);
+      refreshUI();
+      document.getElementById('result-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      setStatus(e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   // ── Search ────────────────────────────────────────────────────────────────
   async function doSearch() {
     const name    = document.getElementById('inp-name').value.trim();
     const address = document.getElementById('inp-address').value.trim();
-    const city    = document.getElementById('inp-city').value.trim() || 'Dallas';
-    const status  = document.getElementById('search-status');
+    const city    = document.getElementById('inp-city').value;
     const btn     = document.getElementById('btn-search');
 
     if (!name) { setStatus('Please enter a restaurant name.', true); return; }
@@ -666,9 +953,9 @@
 
     try {
       const resp = await fetch(`${API}/api/v1/restaurants/search-and-score`, {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, address, city }),
+        body: JSON.stringify({ name, address, city }),
       });
 
       if (!resp.ok) {
@@ -677,12 +964,22 @@
       }
 
       const data = await resp.json();
+
+      // Disambiguation response
+      if (data.disambiguation) {
+        document.getElementById('disambig-inner').innerHTML = renderDisambig(data.candidates, name);
+        document.getElementById('disambig-section').classList.remove('hidden');
+        document.getElementById('result-section').classList.add('hidden');
+        setStatus('', false);
+        document.getElementById('disambig-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+
       cache[data.id] = data;
       addToRecent(data);
-
+      document.getElementById('disambig-section').classList.add('hidden');
       document.getElementById('result-inner').innerHTML = renderResult(data);
       document.getElementById('result-section').classList.remove('hidden');
-
       setStatus('', false);
       refreshUI();
       document.getElementById('result-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -696,16 +993,14 @@
 
   function setStatus(msg, isError) {
     const el = document.getElementById('search-status');
-    el.textContent  = msg;
-    el.className    = 'search-status' + (isError ? ' error' : '');
+    el.textContent = msg;
+    el.className   = 'search-status' + (isError ? ' error' : '');
   }
 
-  // Enter key in any input triggers search
-  document.querySelectorAll('#inp-name, #inp-address, #inp-city').forEach(el =>
+  document.querySelectorAll('#inp-name, #inp-address').forEach(el =>
     el.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); })
   );
 
-  // Render any cached recent list from previous session
   renderRecent();
 </script>
 </body>

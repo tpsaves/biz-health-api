@@ -14,6 +14,7 @@ who need to assess the risk of small restaurant businesses before extending cred
 | `api` | .NET 9 Web API + EF Core | Serves health scores and restaurant data via REST |
 | `scrapers` | Python 3.11 + SQLAlchemy + APScheduler | Collects and stores raw signals on a schedule |
 | `db` | PostgreSQL 17 | Shared data store |
+| `demo` | Single page HTML/CSS/JS | Customer-facing demo UI |
 
 ### Project Structure
 ```
@@ -26,6 +27,8 @@ who need to assess the risk of small restaurant businesses before extending cred
     BizHealthApi.sln
   /scrapers
     Dockerfile
+    scheduler.py
+    scheduler_config.py
     requirements.txt
     /signals
       google_places.py
@@ -35,6 +38,11 @@ who need to assess the risk of small restaurant businesses before extending cred
       hours_monitor.py
     /scoring
       engine.py
+    /onboarding
+      restaurant_lookup.py
+      bulk_onboard.py
+  /demo
+    index.html
   /db
     init.sql
 ```
@@ -46,6 +54,7 @@ who need to assess the risk of small restaurant businesses before extending cred
 - Postgres hostname inside Docker network is `db`
 - Postgres is exposed to Windows host at `localhost:5432` for GUI tools (TablePlus, DBeaver)
 - API runs on port 8080 (not 5000)
+- Scrapers container restarts automatically (`restart: unless-stopped`)
 
 ---
 
@@ -60,7 +69,7 @@ who need to assess the risk of small restaurant businesses before extending cred
 ### Key Tables
 
 **`restaurants`** — master record per restaurant
-- name, address, google_place_id, foursquare_place_id, yelp_id, etc.
+- name, address, city, state, zip, google_place_id, foursquare_place_id, phone, website
 
 **`raw_signals`** — raw scraped data before processing
 - source (google_places, foursquare, health_inspection, tabc_license, hours_monitor)
@@ -86,6 +95,9 @@ license_status          varchar,  -- current TABC license status
 license_expiry_date     date,
 
 scored_at               timestamptz
+
+-- Score factors (added Phase 6)
+score_factors           JSONB,   -- structured explanation of what drove each component score
 ```
 
 ### Score Caps
@@ -97,6 +109,12 @@ scored_at               timestamptz
 - `review_velocity_score` 25%
 - `rating_trend_score` 35%
 - `operational_score` 40%
+
+### Score Risk Bands
+- 80-100: Low risk (green)
+- 60-79: Moderate risk (yellow)
+- 40-59: Elevated risk (orange)
+- 0-39: High risk (red)
 
 ### Conventions
 - All tables use snake_case
@@ -117,9 +135,17 @@ scored_at               timestamptz
 
 ### Key Endpoints
 - `GET /health` — health check (returns 200)
-- `GET /api/v1/restaurants/{id}/score` — returns full enriched score response
-- `GET /api/v1/restaurants/search?name=&zip=` — find a restaurant
+- `GET /api/v1/restaurants` — paginated list of all tracked restaurants with latest overall_score
+- `GET /api/v1/restaurants/{id}` — full restaurant details including latest score breakdown
 - `POST /api/v1/restaurants` — register a restaurant for tracking
+- `POST /api/v1/restaurants/onboard` — accepts name and address, triggers lookup and onboarding
+- `POST /api/v1/restaurants/search-and-score` — accepts name and city, returns cached or fresh score within 30 seconds
+
+### search-and-score Behavior
+- If restaurant exists and scored within last 24 hours → return cached score immediately
+- If restaurant exists but score is stale → trigger fresh scoring run and return updated results
+- If restaurant does not exist → trigger full onboarding pipeline then return results
+- Times out at 30 seconds and returns partial result if scraping takes too long
 
 ### Score API Response Shape
 ```json
@@ -137,6 +163,25 @@ scored_at               timestamptz
   "lastInspectionScore": 94,
   "hoursChangeCount": 0
 }
+
+{
+  "overallScore": 93,
+  "operationalScore": 95,
+  "scoreFactors": {
+    "operational": [
+      {
+        "signal": "health_inspection",
+        "label": "Latest inspection score",
+        "value": "94/100",
+        "date": "2026-02-10",
+        "impact": "positive",
+        "weight": "high"
+      }
+    ],
+    "reviewVelocity": [...],
+    "ratingTrend": [...]
+  }
+}
 ```
 
 ---
@@ -151,6 +196,9 @@ scored_at               timestamptz
 - Use `httpx` for async HTTP requests
 - Use `python-dotenv` for loading environment variables
 - Add comments explaining Python-specific patterns that differ from C#
+- Max retries: 3 per job
+- Job timeout: 60 seconds per restaurant per scraper
+- Failed scraper jobs write error record to raw_signals with source `{source}_error`
 
 ### Signal Sources & Weights (Restaurant Vertical)
 | Signal | Weight | Source | API Key Required |
@@ -163,12 +211,35 @@ scored_at               timestamptz
 | Hours consistency | Medium | Google Places snapshots (change detection) | No |
 | Job postings | Medium | Placeholder — not yet built | TBD |
 | Website uptime | Low | Direct HTTP check | No |
-| Social activity | Low | Inconsistent signal | TBD |
 
-### Scraper Schedule (Phase 4 target)
-- Google Places + Foursquare: daily
-- Health inspections + TABC license: weekly
-- Hours monitor: daily (compares last two Google Places snapshots)
+### Scraper Schedule
+- Google Places + Foursquare: daily at 2:00-2:30 AM UTC
+- Hours monitor: daily at 3:00 AM UTC
+- Health inspections + TABC license: weekly Monday at 4:00-4:30 AM UTC
+- Scoring engine: daily at 5:00 AM UTC
+- New restaurant check: every 10 minutes
+
+### Onboarding
+- Bulk onboarding via CSV (columns: name, address, city, zip)
+- Auto-lookup of Google Place ID and Foursquare ID per restaurant
+- Idempotent — re-running upserts existing rows without duplicating data
+- Unmatched restaurants written to `unmatched.csv` for manual review
+
+---
+
+## Demo UI
+
+- Single self-contained HTML file at `/demo/index.html`
+- No build tools required — pure HTML, CSS, vanilla JavaScript
+- Calls .NET API at `http://localhost:8080`
+- Features:
+  - Restaurant search by name and DFW city
+  - Visual score breakdown with color-coded risk indicators
+  - Component score bars (review velocity, rating trend, operational health)
+  - Signal detail section (inspection score, TABC status, hours, trends)
+  - Plain English risk recommendation
+  - Recently scored list (last 5 restaurants)
+  - Side-by-side comparison of 2 restaurants
 
 ---
 
@@ -233,13 +304,23 @@ Note: Health inspection and TABC license scrapers require no API keys — both u
 
 **Phase 4 — COMPLETE**
 - APScheduler wired up with all 6 jobs running automatically
-- Scheduler runs as container entry point
+- Scheduler runs as container entry point with restart: unless-stopped
 - Error handling added across all scrapers
 - Test cycle confirmed: Pecan Lodge overall_score=93 across all jobs
 
-**Phase 5 — Multi-restaurant support (current)**
-- Bulk onboarding via CSV (name, address, city, zip)
+**Phase 5 — COMPLETE**
+- Bulk CSV onboarding pipeline (name, address, city, zip)
 - Auto-lookup of Google Place ID and Foursquare ID per restaurant
-- Dynamic scheduler job registration for newly onboarded restaurants
+- Dynamic scheduler picks up newly onboarded restaurants every 10 minutes
+- Idempotent onboarding confirmed (35/35 steps green)
+- 5 DFW restaurants onboarded and scoring: Pecan Lodge 93, The Rustic 93, Torchy's Tacos 96, Uchi Dallas 97
 - New API endpoints: POST /onboard, GET /restaurants, GET /restaurants/{id}
-- Success condition: 5 DFW restaurants onboarded and scoring end-to-end
+
+**Phase 6 — Demo UI with score factor drill-down (current)**
+- Single page HTML demo at /demo/index.html
+- Three level score display: summary, signal breakdown, raw evidence
+- Score factors emitted by scoring engine and stored as JSONB
+- Restaurant search by name + address + city with disambiguation
+- Recently scored list and side-by-side comparison with difference highlighting
+- New API endpoint: POST /api/v1/restaurants/search-and-score with 24hr caching
+- Success condition: full visual score breakdown with drill-down for any DFW restaurant

@@ -26,6 +26,9 @@ public class HealthScore
     [Column("overall_score")]
     public int? OverallScore { get; set; }
 
+    [Column("score_factors", TypeName = "jsonb")]
+    public string? ScoreFactors { get; set; }
+
     [Column("scored_at")]
     public DateTime ScoredAt { get; set; }
 
