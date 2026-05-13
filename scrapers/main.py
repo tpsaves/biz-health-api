@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session
 from signals.google_places import scrape_place
 from signals.foursquare import scrape_venue
 from signals.health_inspections import scrape_inspections
+from signals.outscraper_reviews import scrape_outscraper_reviews
 from signals.tabc_license import scrape_license
 from signals.hours_monitor import scrape_hours
 from scoring.engine_v2 import compute_scores_v2
@@ -105,6 +107,27 @@ def run_daily_scrape() -> None:
     logger.info("[daily] job complete")
 
 
+def run_outscraper_scrape() -> None:
+    """Fetch Outscraper review history for all tracked restaurants.
+
+    Runs weekly on Sunday at 1:00 AM UTC — before the daily scoring engine run
+    at 5:00 AM — so fresh monthly data feeds into Sunday scores.
+
+    Outscraper is pay-per-use, so weekly is sufficient to capture monthly review
+    volume trends without unnecessary API charges.
+    """
+    logger.info("[outscraper] job started")
+    with Session(engine) as session:
+        for r in _get_restaurants(session):
+            rid = str(r.id)
+            try:
+                scrape_outscraper_reviews(r.google_place_id, r.name, rid, session)
+                logger.info("[outscraper] %s — OK", r.name)
+            except Exception as exc:
+                logger.error("[outscraper] %s — FAILED: %s", r.name, exc)
+    logger.info("[outscraper] job complete")
+
+
 def run_weekly_scrape() -> None:
     """Health inspections + TABC license check + re-score for every tracked restaurant."""
     logger.info("[weekly] job started")
@@ -113,7 +136,7 @@ def run_weekly_scrape() -> None:
             rid = str(r.id)
 
             for label, fn, args in [
-                ("health_inspections", scrape_inspections, (r.name, rid, session)),
+                ("health_inspections", scrape_inspections, (r.name, r.city, rid, session)),
                 ("tabc_license",       scrape_license,     (r.name, r.city, rid, session)),
                 ("scoring_v2",         _score,             (r.name, rid, session)),
             ]:
@@ -175,6 +198,16 @@ def main() -> None:
         run_weekly_scrape,
         IntervalTrigger(weeks=1),
         id="weekly_scrape",
+        coalesce=True,
+        max_instances=1,
+    )
+    # CronTrigger pins the outscraper job to Sunday 1 AM UTC so it always runs
+    # before the daily scoring job at 5 AM, feeding fresh monthly data into scores.
+    # IntervalTrigger would drift relative to start time; CronTrigger does not.
+    scheduler.add_job(
+        run_outscraper_scrape,
+        CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
+        id="outscraper_scrape",
         coalesce=True,
         max_instances=1,
     )

@@ -38,7 +38,7 @@ who need to assess the risk of small restaurant businesses before extending cred
       hours_monitor.py
     /scoring
       engine.py
-      seasonality.py    ← DFW seasonal adjustment factors and normalization functions
+      seasonality.py
     /onboarding
       restaurant_lookup.py
       bulk_onboard.py
@@ -51,11 +51,10 @@ who need to assess the risk of small restaurant businesses before extending cred
 ### Docker Compose
 - All services run via docker-compose
 - The `scrapers` service populates data; the `api` service reads it
-- Services communicate via shared PostgreSQL 17 instance, not directly
 - Postgres hostname inside Docker network is `db`
-- Postgres is exposed to Windows host at `localhost:5432` for GUI tools (TablePlus, DBeaver)
-- API runs on port 8080 (not 5000)
-- Scrapers container restarts automatically (`restart: unless-stopped`)
+- Postgres exposed to Windows host at `localhost:5432` for GUI tools
+- API runs on port 8080
+- Scrapers container restarts automatically (restart: unless-stopped)
 
 ---
 
@@ -64,66 +63,70 @@ who need to assess the risk of small restaurant businesses before extending cred
 - **Engine**: PostgreSQL 17
 - **ORM (.NET)**: EF Core with Npgsql provider
 - **ORM (Python)**: SQLAlchemy
-- **Connection string format (.NET)**: `Host=db;Port=5432;Database=bizhealth;Username=admin;Password=...`
-- **Connection string format (Python)**: `postgresql://admin:password@db:5432/bizhealth`
+- **Connection string (.NET)**: Host=db;Port=5432;Database=bizhealth;Username=admin;Password=...
+- **Connection string (Python)**: postgresql://admin:password@db:5432/bizhealth
 
 ### Key Tables
 
-**`restaurants`** — master record per restaurant
-- name, address, city, state, zip, google_place_id, foursquare_place_id, phone, website
+**restaurants** — name, address, city, state, zip, google_place_id, foursquare_place_id, phone, website
 
-**`raw_signals`** — raw scraped data before processing
-- source (google_places, foursquare, health_inspection, tabc_license, hours_monitor)
-- payload JSONB
-- scraped_at UTC
+**raw_signals** — source, payload JSONB, scraped_at UTC
 
-**`health_scores`** — computed scores per restaurant
+**health_scores**
 ```sql
 -- Score components
-review_velocity_score   int,
-rating_trend_score      int,
-operational_score       int,
-staffing_score          int,    -- null, placeholder for future job posting signal
-overall_score           int,
+review_velocity_score     int,
+rating_trend_score        int,
+operational_score         int,
+staffing_score            int,        -- null, placeholder for future job posting signal
+overall_score             int,
 
--- Trend analysis fields (added Phase 3b)
-license_history_risk    boolean,  -- true if suspended/expired in last 90 days even if now active
-inspection_trend        varchar,  -- improving, declining, stable, insufficient_data
-hours_change_count      int,      -- number of hours changes in last 90 days
-last_inspection_date    date,
-last_inspection_score   int,
-license_status          varchar,  -- current TABC license status
-license_expiry_date     date,
+-- Trend analysis (Phase 3b)
+license_history_risk      boolean,
+inspection_trend          varchar,    -- improving, declining, stable, insufficient_data
+hours_change_count        int,
+last_inspection_date      date,
+last_inspection_score     int,
+license_status            varchar,
+license_expiry_date       date,
 
-scored_at               timestamptz
-
--- Score factors (added Phase 6)
-score_factors           JSONB,   -- structured explanation of what drove each component score
-
--- Enhanced velocity and rating fields (added Phase 6b)
+-- Enhanced velocity and rating (Phase 6b)
 review_gap_alert          boolean,
 one_star_spike            boolean,
 rating_deterioration      boolean,
 source_divergence         boolean,
-ninety_day_slope          varchar,  -- improving, stable, declining, sharp_decline
+ninety_day_slope          varchar,    -- improving, stable, declining, sharp_decline, insufficient_data
 days_since_last_review    int,
-owner_response_rate       int,      -- percentage 0-100
-monthly_volume_trend      varchar,  -- growing, stable, declining, sharply_declining
-review_count_confidence   varchar,  -- high, medium, low
-seasonality_adjusted      boolean,  -- true if seasonal normalization was applied
-comparison_method         varchar,  -- year_over_year or period_comparison
+owner_response_rate       int,        -- percentage 0-100, requires 10+ reviews
+monthly_volume_trend      varchar,    -- growing, stable, declining, sharply_declining, insufficient_data
+review_count_confidence   varchar,    -- high, medium, low
+seasonality_adjusted      boolean,
+comparison_method         varchar,    -- year_over_year, period_comparison, insufficient_data
 
+-- Confidence gates (Phase 6c)
+volume_trend_confidence   varchar,    -- sufficient, insufficient_data
+
+-- Score factors (Phase 6)
+score_factors             JSONB,
+
+scored_at                 timestamptz
 ```
 
 ### Score Caps
-- Active TABC suspension or expiration → caps `overall_score` at 40
-- Critical health inspection failure (score < 60 or imminent hazard) → caps `overall_score` at 50
-- `license_history_risk` true → caps `overall_score` at 65
+- Active TABC suspension or expiration: caps overall_score at 40
+- Critical health inspection failure (score < 60): caps overall_score at 50
+- license_history_risk true: caps overall_score at 65
+
+### Confidence Gates
+Minimum 10 data points required before applying scoring adjustments.
+Applies to: monthly_volume_trend, ninety_day_slope, recent_vs_lifetime_gap, owner_response_rate.
+Fewer than 10 points sets field to insufficient_data with zero penalty or bonus.
+insufficient_data never triggers a red warning badge in the demo UI.
 
 ### overall_score Weights
-- `review_velocity_score` 25%
-- `rating_trend_score` 35%
-- `operational_score` 40%
+- review_velocity_score: 25%
+- rating_trend_score: 35%
+- operational_score: 40%
 
 ### Score Risk Bands
 - 80-100: Low risk (green)
@@ -133,9 +136,9 @@ comparison_method         varchar,  -- year_over_year or period_comparison
 
 ### Conventions
 - All tables use snake_case
-- All timestamps are UTC
-- Raw scraped payloads stored as JSONB before normalization
-- No localhost in connection strings — always use service name `db` inside containers
+- All timestamps UTC
+- Raw payloads stored as JSONB
+- Never use localhost in connection strings inside containers — always use service name db
 
 ---
 
@@ -143,32 +146,33 @@ comparison_method         varchar,  -- year_over_year or period_comparison
 
 ### Conventions
 - .NET 9 Web API with EF Core
-- Follow standard .NET naming conventions (PascalCase classes, camelCase JSON output)
-- Return `ProblemDetails` for error responses
-- All endpoints versioned under `/api/v1/`
-- Connection strings loaded from environment variables via `.env`
+- PascalCase classes, camelCase JSON output
+- Return ProblemDetails for error responses
+- All endpoints versioned under /api/v1/
+- Connection strings from environment variables
 
 ### Key Endpoints
-- `GET /health` — health check (returns 200)
-- `GET /api/v1/restaurants` — paginated list of all tracked restaurants with latest overall_score
-- `GET /api/v1/restaurants/{id}` — full restaurant details including latest score breakdown
-- `POST /api/v1/restaurants` — register a restaurant for tracking
-- `POST /api/v1/restaurants/onboard` — accepts name and address, triggers lookup and onboarding
-- `POST /api/v1/restaurants/search-and-score` — accepts name and city, returns cached or fresh score within 30 seconds
+- GET /health
+- GET /api/v1/restaurants — paginated list with latest overall_score
+- GET /api/v1/restaurants/{id} — full details with score breakdown
+- POST /api/v1/restaurants — register restaurant
+- POST /api/v1/restaurants/onboard — name + address, triggers lookup and onboarding
+- POST /api/v1/restaurants/search-and-score — name + address + city, cached or fresh score in 30s
 
 ### search-and-score Behavior
-- If restaurant exists and scored within last 24 hours → return cached score immediately
-- If restaurant exists but score is stale → trigger fresh scoring run and return updated results
-- If restaurant does not exist → trigger full onboarding pipeline then return results
-- Times out at 30 seconds and returns partial result if scraping takes too long
+- Scored within 24 hours: return cached score
+- Stale score: trigger fresh run
+- Not found: trigger full onboarding pipeline
+- Timeout: 30 seconds, returns partial result
+- Multiple matches: return disambiguation list
 
 ### Score API Response Shape
 ```json
 {
-  "overallScore": 78,
-  "reviewVelocityScore": 82,
+  "overallScore": 93,
+  "reviewVelocityScore": 100,
   "ratingTrendScore": 85,
-  "operationalScore": 71,
+  "operationalScore": 95,
   "staffingScore": null,
   "licenseStatus": "active",
   "licenseHistoryRisk": false,
@@ -176,46 +180,26 @@ comparison_method         varchar,  -- year_over_year or period_comparison
   "inspectionTrend": "stable",
   "lastInspectionDate": "2026-02-10",
   "lastInspectionScore": 94,
-  "hoursChangeCount": 0
-}
-
-{
-  "overallScore": 93,
-  "operationalScore": 95,
-  "scoreFactors": {
-    "operational": [
-      {
-        "signal": "health_inspection",
-        "label": "Latest inspection score",
-        "value": "94/100",
-        "date": "2026-02-10",
-        "impact": "positive",
-        "weight": "high"
-      }
-    ],
-    "reviewVelocity": [...],
-    "ratingTrend": [...]
-  }
-}
-
-{
+  "hoursChangeCount": 0,
   "reviewGapAlert": false,
   "oneStarSpike": false,
   "ratingDeterioration": false,
   "sourceDivergence": false,
-  "ninetyDaySlope": "stable",
+  "ninetyDaySlope": "insufficient_data",
   "daysSinceLastReview": 4,
-  "ownerResponseRate": 42,
-  "monthlyVolumeTrend": "stable",
+  "ownerResponseRate": null,
+  "monthlyVolumeTrend": "insufficient_data",
   "reviewCountConfidence": "high",
   "seasonalityAdjusted": true,
-  "comparisonMethod": "period_comparison",
+  "comparisonMethod": "insufficient_data",
+  "volumeTrendConfidence": "insufficient_data",
   "scoreFactors": {
-    "operational": [...],
-    "reviewVelocity": [...],
-    "ratingTrend": [...]
+    "operational": [],
+    "reviewVelocity": [],
+    "ratingTrend": []
   }
-}```
+}
+```
 
 ---
 
@@ -223,62 +207,90 @@ comparison_method         varchar,  -- year_over_year or period_comparison
 
 ### Conventions
 - Follow PEP8
-- Each scraper is a separate module under `/scrapers/signals/`
-- All scrapers write raw response to `raw_signals` table before any processing
-- Use APScheduler for scheduling recurring scrape jobs
-- Use `httpx` for async HTTP requests
-- Use `python-dotenv` for loading environment variables
-- Add comments explaining Python-specific patterns that differ from C#
-- Max retries: 3 per job
-- Job timeout: 60 seconds per restaurant per scraper
-- Failed scraper jobs write error record to raw_signals with source `{source}_error`
+- Each scraper is a separate module under /scrapers/signals/
+- All scrapers write raw response to raw_signals before processing
+- APScheduler for scheduling, httpx for HTTP, python-dotenv for env vars
+- Max retries: 3, timeout: 60 seconds per restaurant per scraper
+- Failed jobs write error record to raw_signals with source {source}_error
+- Add comments explaining Python patterns that differ from C#
 
-### Signal Sources & Weights (Restaurant Vertical)
-| Signal | Weight | Source | API Key Required |
+### Signal Sources
+| Signal | Weight | Source | Key Required |
 |---|---|---|---|
 | Google review velocity | High | Google Places API | Yes |
 | Google rating trend | High | Google Places API | Yes |
 | Foursquare rating | Medium | Foursquare Places API | Yes (fsq3...) |
-| Health inspection trend | High | Dallas OpenData + Fort Worth MyHealthDepartment | No |
-| TABC license status | High | Texas Open Data Portal | No |
-| Hours consistency | Medium | Google Places snapshots (change detection) | No |
+| Health inspections | High | City/county portals for all 10 DFW cities | No |
+| TABC license | High | Texas Open Data Portal | No |
+| Hours consistency | Medium | Google Places snapshots | No |
+| Outscraper review history | High | Outscraper Google Maps Reviews API | Yes (OUTSCRAPER_API_KEY) |
 | Job postings | Medium | Placeholder — not yet built | TBD |
 | Website uptime | Low | Direct HTTP check | No |
 
+### Google Places API Limitation
+Returns maximum 5 most recent reviews per request. This means:
+- True monthly volume history cannot be reconstructed from API alone
+- Outscraper (Phase 7) solves this: fetches up to 520 reviews with timestamps for real monthly breakdowns
+- Year-over-year comparison uses Outscraper data when available; falls back to period comparison with DFW seasonal normalization
+- Confidence gate: minimum 10 data points required before applying trend penalties
+
+### Seasonality Adjustment
+Defined in /scrapers/scoring/seasonality.py using DFW industry seasonal factors:
+- January: 0.80, February: 0.90, March: 1.05, April: 1.10, May: 1.10
+- June: 1.05, July: 0.95, August: 0.90, September: 1.05
+- October: 1.15, November: 1.10, December: 1.15
+- Year-over-year used when 12 months available, period comparison with normalization as fallback
+
 ### Scraper Schedule
-- Google Places + Foursquare: daily at 2:00-2:30 AM UTC
-- Hours monitor: daily at 3:00 AM UTC
-- Health inspections + TABC license: weekly Monday at 4:00-4:30 AM UTC
-- Scoring engine: daily at 5:00 AM UTC
+- Google Places + Foursquare: daily 2:00-2:30 AM UTC
+- Hours monitor: daily 3:00 AM UTC
+- Health inspections + TABC: weekly Monday 4:00-4:30 AM UTC
+- Outscraper review history: weekly Sunday 1:00 AM UTC (before Sunday scoring run; pay-per-use)
+- Scoring engine: daily 5:00 AM UTC
 - New restaurant check: every 10 minutes
 
+### Review History Strategy
+- Outscraper (weekly) fetches up to 520 reviews with timestamps → real monthly_breakdown in raw_signals
+- Scoring engine prefers Outscraper monthly_breakdown for year_over_year comparison
+- Fallback: daily Google Places snapshots accumulate over time for period_comparison
+- Seasonal normalization applied to all period comparisons
+
 ### Onboarding
-- Bulk onboarding via CSV (columns: name, address, city, zip)
+- Bulk CSV onboarding (columns: name, address, city, zip)
 - Auto-lookup of Google Place ID and Foursquare ID per restaurant
-- Idempotent — re-running upserts existing rows without duplicating data
-- Unmatched restaurants written to `unmatched.csv` for manual review
+- Idempotent — upserts without duplicating
+- Unmatched restaurants written to unmatched.csv
 
 ---
 
-## Demo UI
+## Demo UI (/demo/index.html)
 
-- Single self-contained HTML file at `/demo/index.html`
-- No build tools required — pure HTML, CSS, vanilla JavaScript
-- Calls .NET API at `http://localhost:8080`
-- Features:
-  - Restaurant search by name and DFW city
-  - Visual score breakdown with color-coded risk indicators
-  - Component score bars (review velocity, rating trend, operational health)
-  - Signal detail section (inspection score, TABC status, hours, trends)
-  - Plain English risk recommendation
-  - Recently scored list (last 5 restaurants)
-  - Side-by-side comparison of 2 restaurants
+- Single self-contained HTML/CSS/JS file, no build tools
+- Calls .NET API at http://localhost:8080
+- Search: Restaurant Name (required), Address or Zip (required), City (optional dropdown)
+- Supported cities: Dallas, Fort Worth, Arlington, Plano, Frisco, McKinney, Denton, Irving, Garland, Grand Prairie
+- Health inspection coverage: all 10 DFW cities (routing per city to correct health authority)
+
+### Three Level Score Display
+- Level 1: overall score, component bars, color risk indicator, plain English recommendation
+- Level 2: expandable signal breakdown per component with impact indicators
+- Level 3: raw evidence — inspection records, TABC details, Google/Foursquare data
+
+### Warning Badges
+- Only shown for confirmed negative signals with sufficient data
+- Never shown for insufficient_data
+- Gray neutral indicator with tooltip for insufficient_data fields
+
+### Features
+- Recently scored list (last 5)
+- Side-by-side comparison of 2 restaurants with difference highlighting
+- Disambiguation list for multiple matches
+- Monthly review sparkline (12 months where available)
+- Seasonal adjustment note below sparkline
 
 ---
 
-## Environment Variables
-
-All secrets and config live in `.env` at project root. Never hardcode values.
+## Environment Variables (.env)
 
 ```
 POSTGRES_HOST=db
@@ -289,12 +301,13 @@ POSTGRES_PASSWORD=
 
 GOOGLE_PLACES_API_KEY=
 FOURSQUARE_API_KEY=        # must start with fsq3...
+OUTSCRAPER_API_KEY=
 ANTHROPIC_API_KEY=
 
 ASPNETCORE_ENVIRONMENT=Development
 ```
 
-Note: Health inspection and TABC license scrapers require no API keys — both use free public data portals.
+Note: Health inspection and TABC scrapers require no API keys — both use free public data portals.
 
 ---
 
@@ -326,28 +339,28 @@ Note: Health inspection and TABC license scrapers require no API keys — both u
 - TABC liquor license monitor (Texas Open Data Portal — no API key required)
 - Google hours change detector (uses existing Google Places snapshots)
 - operational_score added to scoring engine
-- Score caps added: TABC suspension caps overall_score at 40, critical inspection caps at 50
+- Score caps: TABC suspension caps at 40, critical inspection caps at 50
 
 **Phase 3b — COMPLETE**
 - Trend analysis added to scoring engine
-- health_scores table extended with trend fields
-- EF Core migration created for schema changes
+- health_scores extended with trend fields
+- EF Core migration created
 - license_history_risk caps overall_score at 65
-- API response updated to include all trend fields
+- API response updated with all trend fields
 
 **Phase 4 — COMPLETE**
-- APScheduler wired up with all 6 jobs running automatically
+- APScheduler wired with all 6 jobs running automatically
 - Scheduler runs as container entry point with restart: unless-stopped
 - Error handling added across all scrapers
-- Test cycle confirmed: Pecan Lodge overall_score=93 across all jobs
+- Test cycle confirmed: Pecan Lodge overall_score=93
 
 **Phase 5 — COMPLETE**
-- Bulk CSV onboarding pipeline (name, address, city, zip)
+- Bulk CSV onboarding pipeline
 - Auto-lookup of Google Place ID and Foursquare ID per restaurant
-- Dynamic scheduler picks up newly onboarded restaurants every 10 minutes
+- Dynamic scheduler picks up new restaurants every 10 minutes
 - Idempotent onboarding confirmed (35/35 steps green)
-- 5 DFW restaurants onboarded and scoring: Pecan Lodge 93, The Rustic 93, Torchy's Tacos 96, Uchi Dallas 97
-- New API endpoints: POST /onboard, GET /restaurants, GET /restaurants/{id}
+- 5 DFW restaurants onboarded: Pecan Lodge 93, The Rustic 93, Torchy's Tacos 96, Uchi Dallas 97
+- New endpoints: POST /onboard, GET /restaurants, GET /restaurants/{id}
 
 **Phase 6 — COMPLETE**
 - Single page HTML demo at /demo/index.html
@@ -355,15 +368,39 @@ Note: Health inspection and TABC license scrapers require no API keys — both u
 - Score factors emitted by scoring engine and stored as JSONB
 - Restaurant search by name + address + city with disambiguation
 - Recently scored list and side-by-side comparison with difference highlighting
-- New API endpoint: POST /api/v1/restaurants/search-and-score with 24hr caching
+- New endpoint: POST /api/v1/restaurants/search-and-score with 24hr caching
 
 **Phase 6b — COMPLETE**
-- Seasonality adjustment module using DFW industry seasonal factors (scoring/seasonality.py)
-- Year-over-year comparison when 12 months of history available; period comparison fallback
+- Seasonality adjustment module using DFW industry seasonal factors
+- Year-over-year comparison when 12 months of history available
+- Period comparison with seasonal normalization as fallback
 - New score factors: monthly volume trend, recency gap, owner response rate,
   1-star spike, 90-day rating slope, recent vs lifetime gap,
-  cross-source divergence, review count confidence multiplier
-- 11 new columns in health_scores; velocity_metrics extracted by google_places.py
-- Warning badges in demo UI for triggered flags (review_gap_alert, one_star_spike, etc.)
-- Monthly review sparkline with DFW seasonal adjustment note
-- test_engine_v4.py confirms all 5 DFW restaurants score with full Phase 6b data
+  cross-source divergence, review count confidence
+- Warning badges in demo UI for triggered flags
+- Monthly review sparkline in demo UI
+
+**Phase 6c — COMPLETE**
+- Confidence gate added: minimum 10 data points required before applying trend penalties
+- monthly_volume_trend shows insufficient_data instead of false sharply_declining signals
+- Same gate applied to ninety_day_slope, recent_vs_lifetime_gap, owner_response_rate
+- volume_trend_confidence column added to health_scores
+- Demo UI shows gray neutral indicator for insufficient_data with explanatory tooltip
+- No healthy restaurant shows red warning badges due to insufficient data
+
+**Phase 7 — COMPLETE**
+- Outscraper Google Maps Reviews integration: fetches up to 12 months of review history per restaurant
+- monthly_breakdown stored in raw_signals (source=outscraper_reviews) with count + avg_rating per month
+- Scoring engine prefers Outscraper data for year_over_year comparison; falls back to period_comparison
+- comparison_method = year_over_year when Outscraper data available; monthly_volume_trend shows real trend
+- Health inspection coverage expanded to all 10 DFW cities with per-city authority routing:
+  Dallas (City of Dallas), Fort Worth/Arlington/Grand Prairie (Tarrant County MHD),
+  Plano/Frisco/McKinney (Collin County MHD), Irving/Garland (Dallas County), Denton (Denton County)
+- TABC scraper confirmed state-wide: covers all DFW cities, city_matched logged per record
+- Outscraper job added to scheduler: weekly Sunday 1:00 AM UTC (CronTrigger, before 5 AM scoring)
+
+**Phase 8 — Next (choose one)**
+Option A: API hardening — authentication, rate limiting, ready for first paying customer
+Option B: Customer validation — demo to Sysco/distributor contact, gather feedback
+Option C: Job postings signal — integrate Indeed or LinkedIn for staffing stress indicator
+Option D: Website uptime monitor — direct HTTP check as low-weight operational signal

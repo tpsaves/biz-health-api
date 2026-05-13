@@ -66,11 +66,12 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             {"rid": restaurant_id, "src": source},
         ).one_or_none()
 
-    google_row     = _latest("google_places")
-    foursquare_row = _latest("foursquare")
-    inspection_row = _latest("health_inspections")
-    tabc_row       = _latest("tabc_license")
-    hours_row      = _latest("hours_monitor")
+    google_row       = _latest("google_places")
+    foursquare_row   = _latest("foursquare")
+    inspection_row   = _latest("health_inspections")
+    tabc_row         = _latest("tabc_license")
+    hours_row        = _latest("hours_monitor")
+    outscraper_row   = _latest("outscraper_reviews")
 
     # ── Base review data ───────────────────────────────────────────────────────
     google_review_count = 0
@@ -103,7 +104,26 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     monthly_volume_trend   = "insufficient_data"
     seasonality_adjusted   = False
     comparison_method      = "insufficient_data"
-    monthly_counts_by_ym   = _parse_monthly_counts(monthly_from_rev)
+
+    # Prefer Outscraper monthly_breakdown when available — it contains real review
+    # timestamps for up to 12 months, enabling year_over_year comparison.
+    # Fall back to the small sample accumulated from daily Google Places snapshots.
+    outscraper_monthly: dict = {}
+    if outscraper_row:
+        outscraper_monthly = outscraper_row.payload.get("monthly_breakdown", {})
+
+    if outscraper_monthly:
+        # Convert {"YYYY-MM": {"count": N, ...}} → {(year, month): count}
+        # Same tuple-keyed format that seasonality.year_over_year() expects.
+        monthly_counts_by_ym = {}
+        for key, val in outscraper_monthly.items():
+            try:
+                year, month = key.split("-")
+                monthly_counts_by_ym[(int(year), int(month))] = val["count"]
+            except (ValueError, KeyError):
+                pass
+    else:
+        monthly_counts_by_ym = _parse_monthly_counts(monthly_from_rev)
 
     if monthly_counts_by_ym:
         try:
