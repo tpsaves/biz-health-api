@@ -38,6 +38,7 @@ who need to assess the risk of small restaurant businesses before extending cred
       hours_monitor.py
     /scoring
       engine.py
+      seasonality.py    ← DFW seasonal adjustment factors and normalization functions
     /onboarding
       restaurant_lookup.py
       bulk_onboard.py
@@ -98,6 +99,20 @@ scored_at               timestamptz
 
 -- Score factors (added Phase 6)
 score_factors           JSONB,   -- structured explanation of what drove each component score
+
+-- Enhanced velocity and rating fields (added Phase 6b)
+review_gap_alert          boolean,
+one_star_spike            boolean,
+rating_deterioration      boolean,
+source_divergence         boolean,
+ninety_day_slope          varchar,  -- improving, stable, declining, sharp_decline
+days_since_last_review    int,
+owner_response_rate       int,      -- percentage 0-100
+monthly_volume_trend      varchar,  -- growing, stable, declining, sharply_declining
+review_count_confidence   varchar,  -- high, medium, low
+seasonality_adjusted      boolean,  -- true if seasonal normalization was applied
+comparison_method         varchar,  -- year_over_year or period_comparison
+
 ```
 
 ### Score Caps
@@ -182,7 +197,25 @@ score_factors           JSONB,   -- structured explanation of what drove each co
     "ratingTrend": [...]
   }
 }
-```
+
+{
+  "reviewGapAlert": false,
+  "oneStarSpike": false,
+  "ratingDeterioration": false,
+  "sourceDivergence": false,
+  "ninetyDaySlope": "stable",
+  "daysSinceLastReview": 4,
+  "ownerResponseRate": 42,
+  "monthlyVolumeTrend": "stable",
+  "reviewCountConfidence": "high",
+  "seasonalityAdjusted": true,
+  "comparisonMethod": "period_comparison",
+  "scoreFactors": {
+    "operational": [...],
+    "reviewVelocity": [...],
+    "ratingTrend": [...]
+  }
+}```
 
 ---
 
@@ -316,11 +349,21 @@ Note: Health inspection and TABC license scrapers require no API keys — both u
 - 5 DFW restaurants onboarded and scoring: Pecan Lodge 93, The Rustic 93, Torchy's Tacos 96, Uchi Dallas 97
 - New API endpoints: POST /onboard, GET /restaurants, GET /restaurants/{id}
 
-**Phase 6 — Demo UI with score factor drill-down (current)**
+**Phase 6 — COMPLETE**
 - Single page HTML demo at /demo/index.html
 - Three level score display: summary, signal breakdown, raw evidence
 - Score factors emitted by scoring engine and stored as JSONB
 - Restaurant search by name + address + city with disambiguation
 - Recently scored list and side-by-side comparison with difference highlighting
 - New API endpoint: POST /api/v1/restaurants/search-and-score with 24hr caching
-- Success condition: full visual score breakdown with drill-down for any DFW restaurant
+
+**Phase 6b — COMPLETE**
+- Seasonality adjustment module using DFW industry seasonal factors (scoring/seasonality.py)
+- Year-over-year comparison when 12 months of history available; period comparison fallback
+- New score factors: monthly volume trend, recency gap, owner response rate,
+  1-star spike, 90-day rating slope, recent vs lifetime gap,
+  cross-source divergence, review count confidence multiplier
+- 11 new columns in health_scores; velocity_metrics extracted by google_places.py
+- Warning badges in demo UI for triggered flags (review_gap_alert, one_star_spike, etc.)
+- Monthly review sparkline with DFW seasonal adjustment note
+- test_engine_v4.py confirms all 5 DFW restaurants score with full Phase 6b data
