@@ -44,9 +44,12 @@ def main() -> None:
     with Session(engine) as session:
         rows = session.execute(
             text(
-                "SELECT id, name, google_place_id "
+                "SELECT id, name, city, google_place_id "
                 "FROM restaurants "
+                # Exclude the test-only rows inserted by health inspection / TABC test scripts
+                # (they have fake place IDs starting with 'test_').
                 "WHERE google_place_id IS NOT NULL "
+                "  AND google_place_id NOT LIKE 'test_%' "
                 "ORDER BY name"
             )
         ).fetchall()
@@ -64,12 +67,12 @@ def main() -> None:
     passed = 0
     failed = 0
 
-    for restaurant_id, name, place_id in rows:
+    for restaurant_id, name, city, place_id in rows:
         _banner(name)
         try:
             with Session(engine) as session:
                 payload = scrape_outscraper_reviews(
-                    str(place_id), name, str(restaurant_id), session
+                    str(place_id), name, str(restaurant_id), session, city=city or ""
                 )
 
             breakdown = payload.get("monthly_breakdown", {})

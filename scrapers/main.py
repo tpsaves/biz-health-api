@@ -121,7 +121,7 @@ def run_outscraper_scrape() -> None:
         for r in _get_restaurants(session):
             rid = str(r.id)
             try:
-                scrape_outscraper_reviews(r.google_place_id, r.name, rid, session)
+                scrape_outscraper_reviews(r.google_place_id, r.name, rid, session, city=r.city)
                 logger.info("[outscraper] %s — OK", r.name)
             except Exception as exc:
                 logger.error("[outscraper] %s — FAILED: %s", r.name, exc)
