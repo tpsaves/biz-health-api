@@ -29,7 +29,20 @@ CREATE TABLE IF NOT EXISTS health_scores (
     staffing_score        INT,
     overall_score         INT,
     score_factors         JSONB,
-    scored_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    scored_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Phase 6b: enhanced velocity and rating fields
+    review_gap_alert          BOOLEAN,
+    one_star_spike            BOOLEAN,
+    rating_deterioration      BOOLEAN,
+    source_divergence         BOOLEAN,
+    ninety_day_slope          VARCHAR,
+    days_since_last_review    INT,
+    owner_response_rate       INT,
+    monthly_volume_trend      VARCHAR,
+    review_count_confidence   VARCHAR,
+    seasonality_adjusted      BOOLEAN,
+    comparison_method         VARCHAR
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_signals_restaurant_id  ON raw_signals(restaurant_id);

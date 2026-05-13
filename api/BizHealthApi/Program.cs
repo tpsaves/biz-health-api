@@ -177,11 +177,15 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
         return Results.NotFound(new { message = $"\"{restaurant.Name}\" is in the system but has not been scored yet." });
 
     // Parse score_factors from JSONB column.
-    JsonElement? scoreFactors = null;
+    JsonElement? scoreFactors        = null;
+    JsonElement? monthlyReviewCounts = null;
     if (score.ScoreFactors is not null)
     {
         using var sfDoc = JsonDocument.Parse(score.ScoreFactors);
-        scoreFactors = sfDoc.RootElement.Clone();
+        var root = sfDoc.RootElement;
+        scoreFactors = root.Clone();
+        if (root.TryGetProperty("monthlyReviewCounts", out var mrc))
+            monthlyReviewCounts = mrc.Clone();
     }
 
     // Fetch latest raw signal payloads + scraped timestamps for all sources.
@@ -321,13 +325,25 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
         zip     = restaurant.Zip,
         score = new
         {
-            overallScore        = score.OverallScore,
-            reviewVelocityScore = score.ReviewVelocityScore,
-            ratingTrendScore    = score.RatingTrendScore,
-            operationalScore    = score.OperationalScore,
-            staffingScore       = score.StaffingScore,
-            scoredAt            = score.ScoredAt,
+            overallScore           = score.OverallScore,
+            reviewVelocityScore    = score.ReviewVelocityScore,
+            ratingTrendScore       = score.RatingTrendScore,
+            operationalScore       = score.OperationalScore,
+            staffingScore          = score.StaffingScore,
+            scoredAt               = score.ScoredAt,
             scoreFactors,
+            // Phase 6b flags and enhanced fields
+            reviewGapAlert         = score.ReviewGapAlert,
+            oneStarSpike           = score.OneStarSpike,
+            ratingDeterioration    = score.RatingDeterioration,
+            sourceDivergence       = score.SourceDivergence,
+            ninetyDaySlope         = score.NinetyDaySlope,
+            daysSinceLastReview    = score.DaysSinceLastReview,
+            ownerResponseRate      = score.OwnerResponseRate,
+            monthlyVolumeTrend     = score.MonthlyVolumeTrend,
+            reviewCountConfidence  = score.ReviewCountConfidence,
+            seasonalityAdjusted    = score.SeasonalityAdjusted,
+            comparisonMethod       = score.ComparisonMethod,
         },
         details = new
         {
@@ -360,6 +376,7 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
                 daysWithHours,
                 scrapedAt = hmInfo.ScrapedAt,
             },
+            monthlyReviewCounts,
         },
     });
 });

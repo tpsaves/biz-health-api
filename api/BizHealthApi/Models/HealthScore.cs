@@ -32,5 +32,39 @@ public class HealthScore
     [Column("scored_at")]
     public DateTime ScoredAt { get; set; }
 
+    // Phase 6b: enhanced velocity and rating fields
+    [Column("review_gap_alert")]
+    public bool? ReviewGapAlert { get; set; }
+
+    [Column("one_star_spike")]
+    public bool? OneStarSpike { get; set; }
+
+    [Column("rating_deterioration")]
+    public bool? RatingDeterioration { get; set; }
+
+    [Column("source_divergence")]
+    public bool? SourceDivergence { get; set; }
+
+    [Column("ninety_day_slope")]
+    public string? NinetyDaySlope { get; set; }
+
+    [Column("days_since_last_review")]
+    public int? DaysSinceLastReview { get; set; }
+
+    [Column("owner_response_rate")]
+    public int? OwnerResponseRate { get; set; }
+
+    [Column("monthly_volume_trend")]
+    public string? MonthlyVolumeTrend { get; set; }
+
+    [Column("review_count_confidence")]
+    public string? ReviewCountConfidence { get; set; }
+
+    [Column("seasonality_adjusted")]
+    public bool? SeasonalityAdjusted { get; set; }
+
+    [Column("comparison_method")]
+    public string? ComparisonMethod { get; set; }
+
     public Restaurant? Restaurant { get; set; }
 }

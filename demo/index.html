@@ -353,6 +353,35 @@
     }
     .btn-unpin:hover { border-color: var(--red); color: var(--red); }
 
+    /* ── Warning badges (Phase 6b) ───────────────────────────────────────── */
+    .warn-badges   { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .warn-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; font-weight: 600; padding: 4px 10px;
+      border-radius: 20px; border: 1.5px solid;
+    }
+    .warn-badge-review  { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+    .warn-badge-rating  { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .warn-badge-source  { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+
+    /* ── Sparkline (Phase 6b) ────────────────────────────────────────────── */
+    .sparkline-wrap    { margin: 8px 0 4px; }
+    .sparkline-label   { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 6px; }
+    .sparkline-bars    { display: flex; align-items: flex-end; gap: 4px; height: 36px; }
+    .sparkline-bar     { flex: 1; background: #3b82f6; border-radius: 2px 2px 0 0; opacity: .75; min-height: 2px; }
+    .sparkline-footer  { font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic; }
+    .sparkline-months  { display: flex; gap: 4px; }
+    .sparkline-month   { flex: 1; text-align: center; font-size: 10px; color: var(--muted); overflow: hidden; }
+
+    /* ── Velocity / rating supplemental info ────────────────────────────── */
+    .suppl-panel  { margin-top: 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; font-size: 12px; }
+    .suppl-row    { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; color: var(--muted); }
+    .suppl-key    { font-weight: 600; }
+    .suppl-val    { color: var(--text); font-weight: 500; }
+    .recency-green { color: var(--green);  }
+    .recency-amber { color: var(--amber);  }
+    .recency-red   { color: var(--red);    }
+
     /* ── Recently scored ─────────────────────────────────────────────────── */
     .recent-empty { font-size: 13px; color: var(--muted); padding: 4px 0; }
     .recent-list  { display: flex; flex-direction: column; gap: 8px; }
@@ -632,8 +661,92 @@
     return html;
   }
 
+  // ── Phase 6b: Warning badges ──────────────────────────────────────────────
+  function renderWarningBadges(s) {
+    const badges = [];
+    if (s.reviewGapAlert)      badges.push(`<span class="warn-badge warn-badge-review">⚠ Review Gap</span>`);
+    if (s.oneStarSpike)        badges.push(`<span class="warn-badge warn-badge-rating">⚠ 1-Star Spike</span>`);
+    if (s.ratingDeterioration) badges.push(`<span class="warn-badge warn-badge-rating">⚠ Rating Decline</span>`);
+    if (s.sourceDivergence)    badges.push(`<span class="warn-badge warn-badge-source">⚠ Source Divergence</span>`);
+    return badges.length ? `<div class="warn-badges">${badges.join('')}</div>` : '';
+  }
+
+  // ── Phase 6b: Sparkline bar chart ─────────────────────────────────────────
+  function renderSparkline(monthlyReviewCounts, seasonalityAdjusted, comparisonMethod) {
+    if (!monthlyReviewCounts) return '';
+    const keys = Object.keys(monthlyReviewCounts).sort();
+    if (!keys.length) return '';
+    const last = Math.min(12, keys.length);
+    const slice = keys.slice(-last);
+    const vals  = slice.map(k => monthlyReviewCounts[k]);
+    const max   = Math.max(...vals, 1);
+    const bars  = slice.map((k, i) => {
+      const h = Math.max(4, Math.round(vals[i] / max * 36));
+      return `<div class="sparkline-bar" style="height:${h}px" title="${k}: ${vals[i]} reviews"></div>`;
+    }).join('');
+    const monthLabels = slice.map(k => {
+      const [, m] = k.split('-');
+      return `<span class="sparkline-month">${['','J','F','M','A','M','J','J','A','S','O','N','D'][+m]}</span>`;
+    }).join('');
+    const methodLabel = comparisonMethod === 'year_over_year' ? 'Year-over-year' :
+                        comparisonMethod === 'period_comparison' ? 'Period comparison' : '';
+    const adjNote = seasonalityAdjusted
+      ? 'Volumes adjusted for DFW seasonal patterns'
+      : (methodLabel ? `Basis: ${methodLabel}` : '');
+    return `<div class="sparkline-wrap">
+      <div class="sparkline-label">Monthly review trend (${last} months)</div>
+      <div class="sparkline-bars">${bars}</div>
+      <div class="sparkline-months">${monthLabels}</div>
+      ${adjNote ? `<div class="sparkline-footer">${adjNote}${methodLabel && seasonalityAdjusted ? ' · ' + methodLabel : ''}</div>` : ''}
+    </div>`;
+  }
+
+  // ── Phase 6b: Velocity supplemental panel ────────────────────────────────
+  function renderVelocitySupplemental(s, monthlyReviewCounts) {
+    const rows = [];
+
+    if (s.daysSinceLastReview != null) {
+      const d = s.daysSinceLastReview;
+      const cls = d < 7 ? 'recency-green' : d <= 30 ? 'recency-amber' : 'recency-red';
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Days since last review</span><span class="suppl-val ${cls}">${d} days${d > 45 ? ' ⚠' : ''}</span></div>`);
+    }
+    if (s.ownerResponseRate != null) {
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Owner response rate</span><span class="suppl-val">${s.ownerResponseRate}%</span></div>`);
+    }
+    if (s.reviewCountConfidence) {
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Rating confidence</span><span class="suppl-val">${s.reviewCountConfidence.charAt(0).toUpperCase() + s.reviewCountConfidence.slice(1)}</span></div>`);
+    }
+    if (s.comparisonMethod && s.comparisonMethod !== 'insufficient_data') {
+      const label = s.comparisonMethod === 'year_over_year' ? 'Year-over-year' : 'Period comparison (3-month)';
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Comparison basis</span><span class="suppl-val">${label}</span></div>`);
+    }
+
+    const sparkline = renderSparkline(monthlyReviewCounts, s.seasonalityAdjusted, s.comparisonMethod);
+    if (!rows.length && !sparkline) return '';
+    return `<div class="suppl-panel">${sparkline}${rows.join('')}</div>`;
+  }
+
+  // ── Phase 6b: Rating supplemental panel ──────────────────────────────────
+  function renderRatingSupplemental(s) {
+    const rows = [];
+
+    if (s.ninetyDaySlope && s.ninetyDaySlope !== 'stable') {
+      const arrows = { improving: '↑', declining: '↓', sharp_decline: '↓↓' };
+      const colors = { improving: 'var(--green)', declining: 'var(--orange)', sharp_decline: 'var(--red)' };
+      const label  = s.ninetyDaySlope.replace(/_/g, ' ');
+      const arrow  = arrows[s.ninetyDaySlope] || '→';
+      const color  = colors[s.ninetyDaySlope] || 'var(--text)';
+      rows.push(`<div class="suppl-row"><span class="suppl-key">90-day slope</span><span class="suppl-val" style="color:${color}">${arrow} ${label}</span></div>`);
+    }
+    if (s.sourceDivergence) {
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Cross-source</span><span class="suppl-val recency-red">⚠ Google ≠ Foursquare (&gt;0.5★ gap)</span></div>`);
+    }
+
+    return rows.length ? `<div class="suppl-panel">${rows.join('')}</div>` : '';
+  }
+
   // ── Component block (Level 1 bar + Level 2 factors + Level 3 evidence) ────
-  function componentBlock(id, ctx, label, score, factors, evidenceHtml) {
+  function componentBlock(id, ctx, label, score, factors, supplementalHtml, evidenceHtml) {
     const c = riskColor(score ?? 0);
     const elemId = `${id}-${ctx}`;
     return `<div class="component-block">
@@ -645,6 +758,7 @@
       </div>
       <div class="factors-panel hidden" id="fac-${elemId}">
         ${renderFactorRows(factors)}
+        ${supplementalHtml || ''}
         ${evidenceHtml ? `
           <button class="evidence-toggle" id="evtog-${elemId}" onclick="toggleEvidence('${elemId}')">&#9658; View raw data</button>
           <div class="evidence-panel hidden" id="ev-${elemId}">${evidenceHtml}</div>
@@ -686,9 +800,11 @@
       d.tabcLicenseType ? `${d.tabcLicenseType} license` : null,
     ].filter(Boolean).join(' · ');
 
-    const rvBlock = componentBlock(data.id, 'rv', 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, renderGoogleEvidence(ev));
-    const rtBlock = componentBlock(data.id, 'rt', 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    renderRatingEvidence(ev));
-    const opBlock = componentBlock(data.id, 'op', 'Operational Health', s.operationalScore,    sf.operational,    renderInspectionEvidence(ev));
+    const rvSuppl = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
+    const rtSuppl = renderRatingSupplemental(s);
+    const rvBlock = componentBlock(data.id, 'rv', 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSuppl, renderGoogleEvidence(ev));
+    const rtBlock = componentBlock(data.id, 'rt', 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSuppl, renderRatingEvidence(ev));
+    const opBlock = componentBlock(data.id, 'op', 'Operational Health', s.operationalScore,    sf.operational,    '',      renderInspectionEvidence(ev));
 
     return `
       <div class="result-header">
@@ -703,6 +819,8 @@
           ${isPinned ? '✓ Pinned' : pinFull ? 'Compare full' : '⊕ Pin to Compare'}
         </button>
       </div>
+
+      ${renderWarningBadges(s)}
 
       <div class="score-overview" style="background:${riskBg(o)};border-color:${riskBorder(o)}">
         <div class="score-ring-wrap">${scoreRing(o, 92)}</div>
@@ -762,15 +880,18 @@
       return `<span class="compare-diff-badge ${better ? 'compare-diff-better' : 'compare-diff-worse'}">${better ? '+' : '-'}${diffs[key].gap}</span>`;
     }
 
-    const rvBlock = componentBlock(data.id, `cmp${index}rv`, 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, renderGoogleEvidence(ev));
-    const rtBlock = componentBlock(data.id, `cmp${index}rt`, 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    renderRatingEvidence(ev));
-    const opBlock = componentBlock(data.id, `cmp${index}op`, 'Operational Health', s.operationalScore,    sf.operational,    renderInspectionEvidence(ev));
+    const rvSupplC = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
+    const rtSupplC = renderRatingSupplemental(s);
+    const rvBlock = componentBlock(data.id, `cmp${index}rv`, 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSupplC, renderGoogleEvidence(ev));
+    const rtBlock = componentBlock(data.id, `cmp${index}rt`, 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSupplC, renderRatingEvidence(ev));
+    const opBlock = componentBlock(data.id, `cmp${index}op`, 'Operational Health', s.operationalScore,    sf.operational,    '',       renderInspectionEvidence(ev));
 
     return `
       <div class="compare-col">
         <button class="btn-unpin" onclick="unpin(${index})">&#x2715; Remove</button>
         <div class="compare-col-name">${data.name}</div>
         <div class="compare-col-address">${addrLine}</div>
+        ${renderWarningBadges(s)}
 
         <div class="compare-score-row">
           ${scoreRing(o, 72)}
