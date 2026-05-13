@@ -179,30 +179,65 @@ def _fetch_dallas_opendata(name: str) -> list[dict]:
 
 
 def _fetch_myhealthdept(name: str, region: str, authority: str) -> list[dict]:
-    """MyHealthDepartment portal REST API (Tarrant and Collin counties)."""
-    # The portal exposes a search endpoint; results include inspection scores.
-    resp = httpx.get(
-        f"{_MHD_BASE}/{region}/api/v1/health-facilities/search",
-        params={"q": name, "limit": 10},
+    """MyHealthDepartment portal REST API (Tarrant and Collin counties).
+
+    All MHD jurisdictions share a single POST endpoint at the domain root.
+    The `path` field in the request body selects the jurisdiction (e.g. "tarrant").
+    Response is a flat array of inspection records — the most recent inspection
+    per matching establishment is returned directly (no nested inspections list).
+    """
+    headers = {
+        # Required: portal returns 403 to non-browser User-Agent strings.
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": _MHD_BASE,
+        "Referer": f"{_MHD_BASE}/{region}/search",
+    }
+
+    body = {
+        "task": "searchInspections",
+        "data": {
+            "path": region,
+            "programName": "",
+            "filters": {},
+            "start": 0,
+            "count": 10,
+            "searchQueryOverride": None,
+            "searchStr": name,
+            "lat": 0,
+            "lng": 0,
+            "sort": {},
+        },
+    }
+
+    resp = httpx.post(
+        f"{_MHD_BASE}/",
+        json=body,
+        headers=headers,
         timeout=15.0,
     )
     resp.raise_for_status()
-    data = resp.json()
+    records_raw = resp.json()
 
-    # Response may be a list directly or wrapped in a results/data envelope.
-    facilities = data if isinstance(data, list) else data.get("results", data.get("data", []))
+    if not isinstance(records_raw, list):
+        return []
 
+    # Normalize MHD field names to the canonical schema expected by the scoring engine.
+    # MHD returns the most-recent inspection per establishment directly (not nested).
     records = []
-    for facility in facilities:
-        # Normalize MHD field names to the common schema the scoring engine expects.
-        inspections = facility.get("inspections", [])
-        if not inspections:
-            continue
-        latest_insp = inspections[0]
+    for item in records_raw:
+        est_name = item.get("establishmentName", name)
+        insp_date = (item.get("inspectionDate") or "")[:10]  # trim time component
+        score = item.get("score")
         records.append({
-            "program_identifier": facility.get("name", name),
-            "insp_date": latest_insp.get("inspectionDate", latest_insp.get("date", "")),
-            "score": str(latest_insp.get("score", "")),
+            "program_identifier": est_name,
+            "insp_date": insp_date,
+            "score": str(score) if score is not None else "",
             "_health_authority": authority,
         })
 

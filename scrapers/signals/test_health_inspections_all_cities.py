@@ -25,16 +25,16 @@ load_dotenv()
 # One representative restaurant per city — chosen for name recognizability and
 # likelihood of appearing in the respective health authority's database.
 _TEST_RESTAURANTS = [
-    {"name": "Pecan Lodge",              "city": "Dallas"},
-    {"name": "Joe T. Garcia's",          "city": "Fort Worth"},
-    {"name": "Babe's Chicken Dinner",    "city": "Arlington"},
-    {"name": "Spring Creek Barbeque",    "city": "Grand Prairie"},
-    {"name": "Whiskey Cake",             "city": "Plano"},
-    {"name": "Lupe Tortilla",            "city": "Frisco"},
-    {"name": "Harvest Seasonal Kitchen", "city": "McKinney"},
-    {"name": "Pappadeaux Seafood",       "city": "Irving"},
-    {"name": "Liberty Burger",           "city": "Garland"},
-    {"name": "LSA Burger Co",            "city": "Denton"},
+    {"name": "Pecan Lodge",          "city": "Dallas"},
+    {"name": "Whataburger",          "city": "Fort Worth"},
+    {"name": "McDonald",              "city": "Arlington"},
+    {"name": "Spring Creek Barbeque","city": "Grand Prairie"},
+    {"name": "Whiskey Cake",         "city": "Plano"},
+    {"name": "Lupe Tortilla",        "city": "Frisco"},
+    {"name": "Chick-fil-A",          "city": "McKinney"},
+    {"name": "Pappadeaux Seafood",   "city": "Irving"},
+    {"name": "Liberty Burger",       "city": "Garland"},
+    {"name": "LSA Burger Co",        "city": "Denton"},
 ]
 
 # Sentinel restaurant used only for test DB upserts — not a real onboarded restaurant.
