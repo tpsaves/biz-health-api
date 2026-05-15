@@ -25,6 +25,8 @@ builder.Services.AddCors(options =>
     options.AddDefaultPolicy(p =>
         p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
+builder.Services.AddHttpClient();
+
 var app = builder.Build();
 
 app.UseCors();
@@ -124,9 +126,44 @@ app.MapGet("/api/v1/restaurants/{id:guid}/score", async (Guid id, BizHealthDbCon
 // Accepts name+address+city or restaurantId directly.
 // Returns disambiguation list when name matches multiple restaurants.
 // Returns cached score with score_factors and full raw evidence for the demo UI.
-app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, BizHealthDbContext db) =>
+app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, BizHealthDbContext db, IHttpClientFactory httpFactory) =>
 {
-    BizHealthApi.Models.Restaurant? restaurant;
+    // When name+address are both provided, call findplacefromtext to resolve to a single
+    // place_id and skip the disambiguation step entirely. Falls back to DB name search
+    // when address is omitted or Google returns no result.
+    async Task<string?> FindPlaceIdAsync(string name, string address, string? city)
+    {
+        var apiKey = Environment.GetEnvironmentVariable("GOOGLE_PLACES_API_KEY") ?? "";
+        if (string.IsNullOrEmpty(apiKey)) return null;
+
+        var parts = new[] { name, address, city, "TX" }.Where(s => !string.IsNullOrWhiteSpace(s));
+        var query = string.Join(" ", parts);
+
+        using var http = httpFactory.CreateClient();
+        var url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json" +
+                  $"?input={Uri.EscapeDataString(query)}&inputtype=textquery&fields=place_id&key={Uri.EscapeDataString(apiKey)}";
+
+        using var resp = await http.GetAsync(url);
+        if (!resp.IsSuccessStatusCode) return null;
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+
+        // ZERO_RESULTS or request_denied — fall back to DB name search.
+        if (!root.TryGetProperty("status", out var statusEl) || statusEl.GetString() == "ZERO_RESULTS")
+            return null;
+
+        if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
+            return null;
+
+        // findplacefromtext orders by relevance. A single result from a name+address query
+        // is unambiguous (confidence ≥ 0.8). Multiple results indicate ambiguity — fall back.
+        if (candidates.GetArrayLength() > 1) return null;
+
+        return candidates[0].TryGetProperty("place_id", out var pid) ? pid.GetString() : null;
+    }
+
+    BizHealthApi.Models.Restaurant? restaurant = null;
 
     if (req.RestaurantId.HasValue)
     {
@@ -140,32 +177,48 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
         if (string.IsNullOrWhiteSpace(req.Name))
             return Results.BadRequest(new { message = "Name is required." });
 
-        var candidates = await db.Restaurants
-            .Where(r => EF.Functions.ILike(r.Name, $"%{req.Name}%"))
-            .ToListAsync();
-
-        if (!candidates.Any())
-            return Results.NotFound(new { message = $"No restaurant found matching \"{req.Name}\". Check the name and try again." });
-
-        // Multiple matches → return disambiguation list so the UI can let the user pick.
-        if (candidates.Count > 1)
+        // Name + address → resolve via Google Places for a precise single match.
+        if (!string.IsNullOrWhiteSpace(req.Address))
         {
-            return Results.Ok(new
+            var placeId = await FindPlaceIdAsync(req.Name, req.Address, req.City);
+            if (placeId is not null)
             {
-                disambiguation = true,
-                candidates = candidates.Select(c => new
-                {
-                    id      = c.Id,
-                    name    = c.Name,
-                    address = c.Address,
-                    city    = c.City,
-                    state   = c.State,
-                    zip     = c.Zip,
-                }).ToList(),
-            });
+                restaurant = await db.Restaurants.FirstOrDefaultAsync(r => r.GooglePlaceId == placeId);
+                if (restaurant is null)
+                    return Results.NotFound(new { message = $"\"{req.Name}\" was identified on Google Maps but is not yet tracked in this system." });
+            }
         }
 
-        restaurant = candidates[0];
+        // Name only, or Google returned no confident match — fall back to DB name search.
+        if (restaurant is null)
+        {
+            var candidates = await db.Restaurants
+                .Where(r => EF.Functions.ILike(r.Name, $"%{req.Name}%"))
+                .ToListAsync();
+
+            if (!candidates.Any())
+                return Results.NotFound(new { message = $"No restaurant found matching \"{req.Name}\". Check the name and try again." });
+
+            // Multiple matches → return disambiguation list so the UI can let the user pick.
+            if (candidates.Count > 1)
+            {
+                return Results.Ok(new
+                {
+                    disambiguation = true,
+                    candidates = candidates.Select(c => new
+                    {
+                        id      = c.Id,
+                        name    = c.Name,
+                        address = c.Address,
+                        city    = c.City,
+                        state   = c.State,
+                        zip     = c.Zip,
+                    }).ToList(),
+                });
+            }
+
+            restaurant = candidates[0];
+        }
     }
 
     var score = await db.HealthScores
