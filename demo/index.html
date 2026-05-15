@@ -353,16 +353,17 @@
     }
     .btn-unpin:hover { border-color: var(--red); color: var(--red); }
 
-    /* ── Warning badges (Phase 6b) ───────────────────────────────────────── */
+    /* ── Warning badges (Phase 6b + Phase 8) ────────────────────────────── */
     .warn-badges   { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .warn-badge {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 12px; font-weight: 600; padding: 4px 10px;
       border-radius: 20px; border: 1.5px solid;
     }
-    .warn-badge-review  { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
-    .warn-badge-rating  { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-    .warn-badge-source  { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+    .warn-badge-review    { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+    .warn-badge-rating    { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .warn-badge-source    { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+    .warn-badge-financial { background: #fef2f2; color: #7f1d1d; border-color: #fca5a5; }
 
     /* ── Sparkline (Phase 6b) ────────────────────────────────────────────── */
     .sparkline-wrap    { margin: 8px 0 4px; }
@@ -581,6 +582,8 @@
     if (ops != null && ops < 70) notes.push('Operational records (inspections, licensing, hours coverage) warrant closer manual review.');
     if (vel != null && vel < 50) notes.push('Customer traffic volume is below typical DFW market benchmarks.');
     if (rat != null && rat < 65) notes.push('Customer ratings are trending below DFW market average.');
+    if (data.score.sbaDefault)    notes.push('SBA loan default detected — this restaurant has a charged-off federal loan in its history.');
+    if (data.score.taxDelinquent) notes.push('Business property tax delinquency on record — verify with county appraisal district before extending credit.');
     return { main, notes };
   }
 
@@ -661,13 +664,17 @@
     return html;
   }
 
-  // ── Phase 6b: Warning badges ──────────────────────────────────────────────
+  // ── Phase 6b + 8: Warning badges ─────────────────────────────────────────
   function renderWarningBadges(s) {
     const badges = [];
     if (s.reviewGapAlert)      badges.push(`<span class="warn-badge warn-badge-review">⚠ Review Gap</span>`);
     if (s.oneStarSpike)        badges.push(`<span class="warn-badge warn-badge-rating">⚠ 1-Star Spike</span>`);
     if (s.ratingDeterioration) badges.push(`<span class="warn-badge warn-badge-rating">⚠ Rating Decline</span>`);
     if (s.sourceDivergence)    badges.push(`<span class="warn-badge warn-badge-source">⚠ Source Divergence</span>`);
+    if (s.sbaDefault)          badges.push(`<span class="warn-badge warn-badge-financial">⚠ SBA Loan Default</span>`);
+    if (s.taxDelinquent && (s.taxDelinquencyYears ?? 0) >= 2)
+                               badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent ${s.taxDelinquencyYears}yr</span>`);
+    else if (s.taxDelinquent)  badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent</span>`);
     return badges.length ? `<div class="warn-badges">${badges.join('')}</div>` : '';
   }
 
@@ -724,6 +731,40 @@
     const sparkline = renderSparkline(monthlyReviewCounts, s.seasonalityAdjusted, s.comparisonMethod);
     if (!rows.length && !sparkline) return '';
     return `<div class="suppl-panel">${sparkline}${rows.join('')}</div>`;
+  }
+
+  // ── Phase 8: Financial risk supplemental panel ───────────────────────────
+  function renderFinancialSupplemental(s) {
+    const rows = [];
+    const status = s.sbaLatestStatus;
+    if (status && status !== 'none_found') {
+      const statusLabels = {
+        active:        'Active — outstanding debt',
+        paid_in_full:  'Paid in full',
+        charged_off:   'Charged off (defaulted)',
+        cancelled:     'Cancelled',
+      };
+      const statusColors = {
+        active:        'var(--amber)',
+        paid_in_full:  'var(--green)',
+        charged_off:   'var(--red)',
+        cancelled:     'var(--muted)',
+      };
+      const label = statusLabels[status] || status;
+      const color = statusColors[status] || 'var(--text)';
+      rows.push(`<div class="suppl-row"><span class="suppl-key">SBA loan status</span><span class="suppl-val" style="color:${color}">${label}</span></div>`);
+      if (s.sbaLatestAmount) {
+        rows.push(`<div class="suppl-row"><span class="suppl-key">SBA loan amount</span><span class="suppl-val">$${Number(s.sbaLatestAmount).toLocaleString()}</span></div>`);
+      }
+      if (s.sbaLoanCount > 1) {
+        rows.push(`<div class="suppl-row"><span class="suppl-key">Total SBA loans</span><span class="suppl-val">${s.sbaLoanCount} loans on record</span></div>`);
+      }
+    }
+    if (s.taxDelinquent) {
+      const yrs = s.taxDelinquencyYears || 1;
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Property tax</span><span class="suppl-val recency-red">⚠ Delinquent — ${yrs} year${yrs !== 1 ? 's' : ''}</span></div>`);
+    }
+    return rows.length ? `<div class="suppl-panel">${rows.join('')}</div>` : '';
   }
 
   // ── Phase 6b: Rating supplemental panel ──────────────────────────────────
@@ -800,11 +841,13 @@
       d.tabcLicenseType ? `${d.tabcLicenseType} license` : null,
     ].filter(Boolean).join(' · ');
 
-    const rvSuppl = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
-    const rtSuppl = renderRatingSupplemental(s);
-    const rvBlock = componentBlock(data.id, 'rv', 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSuppl, renderGoogleEvidence(ev));
-    const rtBlock = componentBlock(data.id, 'rt', 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSuppl, renderRatingEvidence(ev));
-    const opBlock = componentBlock(data.id, 'op', 'Operational Health', s.operationalScore,    sf.operational,    '',      renderInspectionEvidence(ev));
+    const rvSuppl  = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
+    const rtSuppl  = renderRatingSupplemental(s);
+    const finSuppl = renderFinancialSupplemental(s);
+    const rvBlock  = componentBlock(data.id, 'rv',  'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSuppl,  renderGoogleEvidence(ev));
+    const rtBlock  = componentBlock(data.id, 'rt',  'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSuppl,  renderRatingEvidence(ev));
+    const opBlock  = componentBlock(data.id, 'op',  'Operational Health', s.operationalScore,    sf.operational,    '',       renderInspectionEvidence(ev));
+    const finBlock = componentBlock(data.id, 'fin', 'Financial Risk',     s.financialRiskScore,  sf.financial,      finSuppl, '');
 
     return `
       <div class="result-header">
@@ -832,7 +875,7 @@
       </div>
 
       <div class="section-label">Score Breakdown — click any bar to drill down</div>
-      <div class="bars">${rvBlock}${rtBlock}${opBlock}</div>
+      <div class="bars">${rvBlock}${rtBlock}${opBlock}${finBlock}</div>
 
       <div class="section-label">Signal Details</div>
       <div class="details-grid">
@@ -880,11 +923,13 @@
       return `<span class="compare-diff-badge ${better ? 'compare-diff-better' : 'compare-diff-worse'}">${better ? '+' : '-'}${diffs[key].gap}</span>`;
     }
 
-    const rvSupplC = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
-    const rtSupplC = renderRatingSupplemental(s);
-    const rvBlock = componentBlock(data.id, `cmp${index}rv`, 'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSupplC, renderGoogleEvidence(ev));
-    const rtBlock = componentBlock(data.id, `cmp${index}rt`, 'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSupplC, renderRatingEvidence(ev));
-    const opBlock = componentBlock(data.id, `cmp${index}op`, 'Operational Health', s.operationalScore,    sf.operational,    '',       renderInspectionEvidence(ev));
+    const rvSupplC  = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
+    const rtSupplC  = renderRatingSupplemental(s);
+    const finSupplC = renderFinancialSupplemental(s);
+    const rvBlock  = componentBlock(data.id, `cmp${index}rv`,  'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSupplC,  renderGoogleEvidence(ev));
+    const rtBlock  = componentBlock(data.id, `cmp${index}rt`,  'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSupplC,  renderRatingEvidence(ev));
+    const opBlock  = componentBlock(data.id, `cmp${index}op`,  'Operational Health', s.operationalScore,    sf.operational,    '',        renderInspectionEvidence(ev));
+    const finBlock = componentBlock(data.id, `cmp${index}fin`, 'Financial Risk',     s.financialRiskScore,  sf.financial,      finSupplC, '');
 
     return `
       <div class="compare-col">
@@ -902,9 +947,9 @@
         </div>
 
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:8px">
-          Score Breakdown ${diffBadge('rv') || diffBadge('rt') || diffBadge('op') ? '— differences highlighted' : ''}
+          Score Breakdown ${diffBadge('rv') || diffBadge('rt') || diffBadge('op') || diffBadge('fin') ? '— differences highlighted' : ''}
         </div>
-        <div class="bars" style="margin-bottom:16px">${rvBlock}${rtBlock}${opBlock}</div>
+        <div class="bars" style="margin-bottom:16px">${rvBlock}${rtBlock}${opBlock}${finBlock}</div>
 
         <div class="rec-box" style="border-left-color:${riskColor(o)};margin-bottom:0">
           <p class="rec-text" style="font-size:13px">${rec.main}</p>
@@ -991,6 +1036,7 @@
           rv:      { winner: (d0.score.reviewVelocityScore ?? 0) >= (d1.score.reviewVelocityScore ?? 0) ? 0 : 1, gap: Math.abs((d0.score.reviewVelocityScore ?? 0) - (d1.score.reviewVelocityScore ?? 0)) },
           rt:      { winner: (d0.score.ratingTrendScore    ?? 0) >= (d1.score.ratingTrendScore    ?? 0) ? 0 : 1, gap: Math.abs((d0.score.ratingTrendScore    ?? 0) - (d1.score.ratingTrendScore    ?? 0)) },
           op:      { winner: (d0.score.operationalScore    ?? 0) >= (d1.score.operationalScore    ?? 0) ? 0 : 1, gap: Math.abs((d0.score.operationalScore    ?? 0) - (d1.score.operationalScore    ?? 0)) },
+          fin:     { winner: (d0.score.financialRiskScore  ?? 0) >= (d1.score.financialRiskScore  ?? 0) ? 0 : 1, gap: Math.abs((d0.score.financialRiskScore  ?? 0) - (d1.score.financialRiskScore  ?? 0)) },
         };
         document.getElementById('compare-grid').innerHTML =
           renderCompareCol(d0, 0, diffs) + renderCompareCol(d1, 1, diffs);

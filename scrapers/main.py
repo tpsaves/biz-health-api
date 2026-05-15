@@ -24,6 +24,8 @@ from signals.health_inspections import scrape_inspections
 from signals.outscraper_reviews import scrape_outscraper_reviews
 from signals.tabc_license import scrape_license
 from signals.hours_monitor import scrape_hours
+from signals.sba_loans import scrape_sba_loans
+from signals.property_tax import scrape_property_tax
 from scoring.engine_v2 import compute_scores_v2
 
 # load_dotenv is a no-op inside Docker (env vars already injected by docker-compose).
@@ -70,7 +72,7 @@ engine = _build_engine()
 def _get_restaurants(session: Session):
     return session.execute(
         text(
-            "SELECT id, name, city, state, google_place_id "
+            "SELECT id, name, city, state, zip, google_place_id "
             "FROM restaurants WHERE google_place_id IS NOT NULL"
         )
     ).fetchall()
@@ -105,6 +107,49 @@ def run_daily_scrape() -> None:
                     logger.error("[daily] %s — %s FAILED: %s", r.name, label, exc)
 
     logger.info("[daily] job complete")
+
+
+def run_sba_loans_scrape() -> None:
+    """Fetch SBA loan history for all tracked restaurants.
+
+    Runs weekly on Sunday at 1:30 AM UTC — after the Outscraper job (1:00 AM)
+    and before the daily scoring run (5:00 AM).
+    SBA Data.gov is a free public dataset with no API key required.
+    """
+    logger.info("[sba_loans] job started")
+    with Session(engine) as session:
+        for r in _get_restaurants(session):
+            rid      = str(r.id)
+            zip_code = r.zip or ""
+            if not zip_code:
+                logger.warning("[sba_loans] %s — no zip code, skipping", r.name)
+                continue
+            try:
+                scrape_sba_loans(r.name, zip_code, rid, session)
+                logger.info("[sba_loans] %s — OK", r.name)
+            except Exception as exc:
+                logger.error("[sba_loans] %s — FAILED: %s", r.name, exc)
+    logger.info("[sba_loans] job complete")
+
+
+def run_property_tax_scrape() -> None:
+    """Fetch business personal property tax status for all tracked restaurants.
+
+    Runs weekly on Sunday at 2:00 AM UTC — after SBA loans (1:30 AM)
+    and before the daily scoring run (5:00 AM).
+    Most DFW CADs do not expose public APIs; this job records no_data_available
+    gracefully when that is the case.
+    """
+    logger.info("[property_tax] job started")
+    with Session(engine) as session:
+        for r in _get_restaurants(session):
+            rid = str(r.id)
+            try:
+                scrape_property_tax(r.name, r.city or "", rid, session)
+                logger.info("[property_tax] %s — OK", r.name)
+            except Exception as exc:
+                logger.error("[property_tax] %s — FAILED: %s", r.name, exc)
+    logger.info("[property_tax] job complete")
 
 
 def run_outscraper_scrape() -> None:
@@ -208,6 +253,22 @@ def main() -> None:
         run_outscraper_scrape,
         CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
         id="outscraper_scrape",
+        coalesce=True,
+        max_instances=1,
+    )
+    # SBA loans: Sunday 1:30 AM UTC (after Outscraper, before scoring at 5 AM).
+    scheduler.add_job(
+        run_sba_loans_scrape,
+        CronTrigger(day_of_week="sun", hour=1, minute=30, timezone="UTC"),
+        id="sba_loans_scrape",
+        coalesce=True,
+        max_instances=1,
+    )
+    # Property tax: Sunday 2:00 AM UTC (after SBA loans, before scoring at 5 AM).
+    scheduler.add_job(
+        run_property_tax_scrape,
+        CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="UTC"),
+        id="property_tax_scrape",
         coalesce=True,
         max_instances=1,
     )

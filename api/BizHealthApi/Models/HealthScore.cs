@@ -66,5 +66,30 @@ public class HealthScore
     [Column("comparison_method")]
     public string? ComparisonMethod { get; set; }
 
+    // Phase 8: financial risk signals
+    [Column("financial_risk_score")]
+    public int? FinancialRiskScore { get; set; }
+
+    [Column("sba_default")]
+    public bool? SbaDefault { get; set; }
+
+    [Column("repeated_sba_borrowing")]
+    public bool? RepeatedSbaBorrowing { get; set; }
+
+    [Column("tax_delinquent")]
+    public bool? TaxDelinquent { get; set; }
+
+    [Column("sba_loan_count")]
+    public int? SbaLoanCount { get; set; }
+
+    [Column("sba_latest_status")]
+    public string? SbaLatestStatus { get; set; }
+
+    [Column("sba_latest_amount")]
+    public decimal? SbaLatestAmount { get; set; }
+
+    [Column("tax_delinquency_years")]
+    public int? TaxDelinquencyYears { get; set; }
+
     public Restaurant? Restaurant { get; set; }
 }

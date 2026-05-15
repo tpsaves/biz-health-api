@@ -16,9 +16,11 @@ _HEALTH_WEIGHT = 0.50
 _TABC_WEIGHT   = 0.30
 _HOURS_WEIGHT  = 0.20
 
-_VELOCITY_WEIGHT    = 0.25
-_RATING_WEIGHT      = 0.35
-_OPERATIONAL_WEIGHT = 0.40
+# Phase 8: weights rebalanced to incorporate financial_risk_score.
+_VELOCITY_WEIGHT    = 0.20
+_RATING_WEIGHT      = 0.30
+_OPERATIONAL_WEIGHT = 0.30
+_FINANCIAL_WEIGHT   = 0.20
 
 _LICENSE_TYPE_SCORES: dict[str, int] = {
     "MB": 100,
@@ -72,6 +74,8 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     tabc_row         = _latest("tabc_license")
     hours_row        = _latest("hours_monitor")
     outscraper_row   = _latest("outscraper_reviews")
+    sba_row          = _latest("sba_loans")
+    prop_tax_row     = _latest("property_tax")
 
     # ── Base review data ───────────────────────────────────────────────────────
     google_review_count = 0
@@ -304,12 +308,65 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         + hours_component * _HOURS_WEIGHT
     )
 
+    # ── financial_risk_score (Phase 8) ────────────────────────────────────────
+    # Starts at 100 (no risk). Penalties applied only when data confirms negative
+    # signals. Absence of SBA or tax data is neutral — no penalty.
+    financial_risk_score  = 100
+    sba_default           = False
+    repeated_sba_borrowing = False
+    tax_delinquent        = False
+    sba_loan_count        = 0
+    sba_latest_status_val = "none_found"
+    sba_latest_amount_val: Optional[float] = None
+    tax_delinquency_years = 0
+
+    if sba_row:
+        sba_payload = sba_row.payload
+        # status='no_data_available' means the API was unreachable — treat as neutral.
+        if sba_payload.get("status") != "no_data_available":
+            sba_loan_count        = sba_payload.get("loan_count", 0)
+            sba_latest_status_val = sba_payload.get("sba_latest_status", "none_found")
+            sba_latest_amount_val = sba_payload.get("sba_latest_amount")
+
+            if sba_payload.get("has_chargeoff"):
+                sba_default = True
+                financial_risk_score -= 40  # charged off / defaulted: -40
+
+            elif sba_latest_status_val == "active":
+                financial_risk_score -= 10  # active SBA debt: -10
+
+            if sba_payload.get("repeated_borrowing"):
+                repeated_sba_borrowing = True
+                financial_risk_score  -= 15  # 2+ loans in history: -15
+
+    if prop_tax_row:
+        pt = prop_tax_row.payload
+        if pt.get("status") != "no_data_available" and pt.get("delinquent"):
+            years = pt.get("years_delinquent", 0) or 0
+            tax_delinquency_years = years
+            if years >= 2:
+                tax_delinquent       = True
+                financial_risk_score -= 35  # delinquent 2+ years: -35
+            elif years == 1:
+                tax_delinquent       = True
+                financial_risk_score -= 20  # delinquent 1 year: -20
+
+    financial_risk_score = max(0, financial_risk_score)
+
     # ── overall_score ──────────────────────────────────────────────────────────
     overall_score = int(
         review_velocity_score * _VELOCITY_WEIGHT
         + rating_trend_score  * _RATING_WEIGHT
         + operational_score   * _OPERATIONAL_WEIGHT
+        + financial_risk_score * _FINANCIAL_WEIGHT
     )
+
+    # ── score caps ─────────────────────────────────────────────────────────────
+    # sba_default caps at 45; tax delinquent 2+ years caps at 55.
+    if sba_default:
+        overall_score = min(overall_score, 45)
+    if tax_delinquent and tax_delinquency_years >= 2:
+        overall_score = min(overall_score, 55)
 
     # ── score_factors ──────────────────────────────────────────────────────────
     review_velocity_factors: list[dict] = []
@@ -529,10 +586,89 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "weight": "medium",
         })
 
+    # ── financial_factors ─────────────────────────────────────────────────────
+    financial_factors: list[dict] = []
+
+    if sba_row and sba_row.payload.get("status") != "no_data_available":
+        loan_count_val = sba_row.payload.get("loan_count", 0)
+        if sba_default:
+            chargeoff_date = ""
+            for loan in (sba_row.payload.get("matched_loans") or []):
+                if loan.get("LoanStatus") == "CHGOFF" and loan.get("ChargeOffDate"):
+                    chargeoff_date = f" (charged off {str(loan['ChargeOffDate'])[:10]})"
+                    break
+            amount_str = f"${sba_latest_amount_val:,.0f}" if sba_latest_amount_val else "unknown amount"
+            sba_value  = f"{loan_count_val} charged-off loan — {amount_str}{chargeoff_date}"
+            sba_impact = "negative"
+            sba_flag   = "sba_default"
+        elif sba_latest_status_val == "active":
+            amount_str = f"${sba_latest_amount_val:,.0f}" if sba_latest_amount_val else "unknown amount"
+            latest_date = ""
+            loans = sba_row.payload.get("matched_loans") or []
+            if loans:
+                latest_date = f" approved {str(loans[0].get('ApprovalDate', ''))[:4]}"
+            sba_value  = f"{loan_count_val} active loan — {amount_str}{latest_date}"
+            sba_impact = "negative"
+            sba_flag   = "repeated_sba_borrowing" if repeated_sba_borrowing else None
+        elif sba_latest_status_val == "paid_in_full":
+            sba_value  = f"{loan_count_val} paid-in-full loan(s)"
+            sba_impact = "neutral" if not repeated_sba_borrowing else "negative"
+            sba_flag   = "repeated_sba_borrowing" if repeated_sba_borrowing else None
+        else:
+            sba_value  = "No SBA loans found"
+            sba_impact = "positive"
+            sba_flag   = None
+
+        financial_factors.append({
+            "signal": "sba_loans",
+            "label":  "SBA loan history",
+            "value":  sba_value,
+            "impact": sba_impact,
+            "weight": "medium",
+            "flag":   sba_flag,
+        })
+    else:
+        financial_factors.append({
+            "signal": "sba_loans",
+            "label":  "SBA loan history",
+            "value":  "No public data available" if not sba_row else "No SBA loans found",
+            "impact": "neutral",
+            "weight": "medium",
+            "flag":   None,
+        })
+
+    if prop_tax_row and prop_tax_row.payload.get("status") != "no_data_available":
+        if tax_delinquent:
+            tax_value  = f"Delinquent — {tax_delinquency_years} year{'s' if tax_delinquency_years != 1 else ''} past due"
+            tax_impact = "negative"
+            tax_flag   = "tax_delinquent"
+        else:
+            tax_value  = "Current — no delinquency"
+            tax_impact = "positive"
+            tax_flag   = None
+        financial_factors.append({
+            "signal": "property_tax",
+            "label":  "Business property tax",
+            "value":  tax_value,
+            "impact": tax_impact,
+            "weight": "medium",
+            "flag":   tax_flag,
+        })
+    else:
+        financial_factors.append({
+            "signal": "property_tax",
+            "label":  "Business property tax",
+            "value":  "No public data available",
+            "impact": "neutral",
+            "weight": "medium",
+            "flag":   None,
+        })
+
     score_factors = {
         "reviewVelocity": review_velocity_factors,
         "ratingTrend":    rating_trend_factors,
         "operational":    operational_factors,
+        "financial":      financial_factors,
     }
 
     # ── Monthly review counts for sparkline (last 12 months) ──────────────────
@@ -556,7 +692,11 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 ninety_day_slope,      days_since_last_review,
                 owner_response_rate,   monthly_volume_trend,
                 review_count_confidence, seasonality_adjusted,
-                comparison_method
+                comparison_method,
+                financial_risk_score,  sba_default,
+                repeated_sba_borrowing, tax_delinquent,
+                sba_loan_count,        sba_latest_status,
+                sba_latest_amount,     tax_delinquency_years
             ) VALUES (
                 :restaurant_id,
                 :review_velocity_score, :rating_trend_score,
@@ -567,28 +707,40 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 :ninety_day_slope,      :days_since_last_review,
                 :owner_response_rate,   :monthly_volume_trend,
                 :review_count_confidence, :seasonality_adjusted,
-                :comparison_method
+                :comparison_method,
+                :financial_risk_score,  :sba_default,
+                :repeated_sba_borrowing, :tax_delinquent,
+                :sba_loan_count,        :sba_latest_status,
+                :sba_latest_amount,     :tax_delinquency_years
             )
             """
         ),
         {
-            "restaurant_id":           restaurant_id,
-            "review_velocity_score":   review_velocity_score,
-            "rating_trend_score":      rating_trend_score,
-            "operational_score":       operational_score,
-            "overall_score":           overall_score,
-            "score_factors":           json.dumps(score_factors),
-            "review_gap_alert":        review_gap_alert,
-            "one_star_spike":          one_star_spike,
-            "rating_deterioration":    rating_deterioration,
-            "source_divergence":       source_divergence,
-            "ninety_day_slope":        ninety_day_slope,
-            "days_since_last_review":  days_since_last,
-            "owner_response_rate":     owner_resp_rate,
-            "monthly_volume_trend":    monthly_volume_trend,
-            "review_count_confidence": review_count_confidence,
-            "seasonality_adjusted":    seasonality_adjusted,
-            "comparison_method":       comparison_method,
+            "restaurant_id":            restaurant_id,
+            "review_velocity_score":    review_velocity_score,
+            "rating_trend_score":       rating_trend_score,
+            "operational_score":        operational_score,
+            "overall_score":            overall_score,
+            "score_factors":            json.dumps(score_factors),
+            "review_gap_alert":         review_gap_alert,
+            "one_star_spike":           one_star_spike,
+            "rating_deterioration":     rating_deterioration,
+            "source_divergence":        source_divergence,
+            "ninety_day_slope":         ninety_day_slope,
+            "days_since_last_review":   days_since_last,
+            "owner_response_rate":      owner_resp_rate,
+            "monthly_volume_trend":     monthly_volume_trend,
+            "review_count_confidence":  review_count_confidence,
+            "seasonality_adjusted":     seasonality_adjusted,
+            "comparison_method":        comparison_method,
+            "financial_risk_score":     financial_risk_score,
+            "sba_default":              sba_default,
+            "repeated_sba_borrowing":   repeated_sba_borrowing,
+            "tax_delinquent":           tax_delinquent,
+            "sba_loan_count":           sba_loan_count,
+            "sba_latest_status":        sba_latest_status_val,
+            "sba_latest_amount":        sba_latest_amount_val,
+            "tax_delinquency_years":    tax_delinquency_years,
         },
     )
     session.commit()
@@ -597,6 +749,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         "review_velocity_score": review_velocity_score,
         "rating_trend_score":    rating_trend_score,
         "operational_score":     operational_score,
+        "financial_risk_score":  financial_risk_score,
         "operational_components": {
             "health_inspection":  health_component,
             "tabc_license":       tabc_component,
@@ -617,6 +770,17 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         "review_count_confidence": review_count_confidence,
         "seasonality_adjusted":    seasonality_adjusted,
         "comparison_method":       comparison_method,
+        # Phase 8 financial risk flags
+        "sba_default":             sba_default,
+        "repeated_sba_borrowing":  repeated_sba_borrowing,
+        "tax_delinquent":          tax_delinquent,
+        "sba_loan_count":          sba_loan_count,
+        "sba_latest_status":       sba_latest_status_val,
+        "sba_latest_amount":       sba_latest_amount_val,
+        "tax_delinquency_years":   tax_delinquency_years,
     }
-    logger.info("v2 scored restaurant_id=%s overall=%s slope=%s", restaurant_id, overall_score, ninety_day_slope)
+    logger.info(
+        "v2 scored restaurant_id=%s overall=%s financial=%s sba_default=%s tax_delinquent=%s",
+        restaurant_id, overall_score, financial_risk_score, sba_default, tax_delinquent,
+    )
     return scores

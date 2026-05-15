@@ -382,6 +382,7 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             reviewVelocityScore    = score.ReviewVelocityScore,
             ratingTrendScore       = score.RatingTrendScore,
             operationalScore       = score.OperationalScore,
+            financialRiskScore     = score.FinancialRiskScore,
             staffingScore          = score.StaffingScore,
             scoredAt               = score.ScoredAt,
             scoreFactors,
@@ -397,6 +398,14 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             reviewCountConfidence  = score.ReviewCountConfidence,
             seasonalityAdjusted    = score.SeasonalityAdjusted,
             comparisonMethod       = score.ComparisonMethod,
+            // Phase 8: financial risk signals
+            sbaDefault             = score.SbaDefault,
+            repeatedSbaBorrowing   = score.RepeatedSbaBorrowing,
+            taxDelinquent          = score.TaxDelinquent,
+            sbaLoanCount           = score.SbaLoanCount,
+            sbaLatestStatus        = score.SbaLatestStatus,
+            sbaLatestAmount        = score.SbaLatestAmount,
+            taxDelinquencyYears    = score.TaxDelinquencyYears,
         },
         details = new
         {

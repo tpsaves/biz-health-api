@@ -42,7 +42,17 @@ CREATE TABLE IF NOT EXISTS health_scores (
     monthly_volume_trend      VARCHAR,
     review_count_confidence   VARCHAR,
     seasonality_adjusted      BOOLEAN,
-    comparison_method         VARCHAR
+    comparison_method         VARCHAR,
+
+    -- Phase 8: financial risk signals (SBA loans + property tax)
+    financial_risk_score      INT,
+    sba_default               BOOLEAN,
+    repeated_sba_borrowing    BOOLEAN,
+    tax_delinquent            BOOLEAN,
+    sba_loan_count            INT,
+    sba_latest_status         VARCHAR,
+    sba_latest_amount         DECIMAL,
+    tax_delinquency_years     INT
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_signals_restaurant_id  ON raw_signals(restaurant_id);
