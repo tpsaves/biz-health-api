@@ -10,8 +10,18 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-_DETAIL_URL = "https://maps.googleapis.com/maps/api/place/details/json"
-_FIELDS = "name,rating,user_ratings_total,reviews,opening_hours"
+# Places API v1 — replaces the legacy maps.googleapis.com/maps/api/place/details endpoint.
+# Auth moves from a query-param "key" to the X-Goog-Api-Key header.
+# Fields are specified in X-Goog-FieldMask instead of a "fields" query param.
+# Reviews are returned in Google's default order; _extract_velocity_metrics()
+# sorts them by _review_dt() so days_since_last_review is always accurate.
+# Note: reviews.rankPreference=NEWEST is only valid on Text/Nearby Search (POST),
+# not on Place Details (GET) — attempting it returns HTTP 400.
+_V1_BASE_URL  = "https://places.googleapis.com/v1/places"
+_V1_FIELD_MASK = (
+    "id,displayName,rating,userRatingCount,"
+    "currentOpeningHours,regularOpeningHours,reviews"
+)
 
 
 def _review_dt(review: dict) -> datetime | None:
@@ -117,8 +127,64 @@ def _extract_velocity_metrics(result: dict) -> dict:
     }
 
 
+def _normalize_v1_response(v1_data: dict) -> dict:
+    """Map Places API v1 field names to the legacy schema stored in raw_signals.
+
+    The scoring engine and hours monitor both read payload["result"] with
+    legacy field names (user_ratings_total, opening_hours, etc.), so we
+    normalize here rather than update every downstream consumer.
+
+    v1 field → legacy field:
+      displayName.text         → name
+      userRatingCount          → user_ratings_total
+      currentOpeningHours      → opening_hours  (falls back to regularOpeningHours)
+      reviews[].text.text      → reviews[].text
+      reviews[].publishTime    → reviews[].publishTime  (kept as-is; _review_dt handles it)
+      reviews[].authorAttribution.displayName → reviews[].author_name
+      reviews[].relativePublishTimeDescription → reviews[].relative_time_description
+      reviews[].ownerResponse.text.text → reviews[].owner_response
+    """
+    # Opening hours: v1 uses camelCase keys and "weekdayDescriptions" instead of "weekday_text".
+    hours_v1 = v1_data.get("currentOpeningHours") or v1_data.get("regularOpeningHours") or {}
+    opening_hours = {
+        "open_now":    hours_v1.get("openNow"),
+        "weekday_text": hours_v1.get("weekdayDescriptions", []),
+        "periods":     hours_v1.get("periods", []),
+    }
+
+    reviews_raw = v1_data.get("reviews") or []
+    reviews = []
+    for r in reviews_raw:
+        owner_resp_text = None
+        if r.get("ownerResponse"):
+            owner_resp_text = (r["ownerResponse"].get("text") or {}).get("text")
+
+        reviews.append({
+            "rating":                    r.get("rating"),
+            "text":                      (r.get("text") or {}).get("text", ""),
+            "author_name":               (r.get("authorAttribution") or {}).get("displayName", ""),
+            "relative_time_description": r.get("relativePublishTimeDescription", ""),
+            "publishTime":               r.get("publishTime"),  # ISO 8601; handled by _review_dt()
+            "owner_response":            owner_resp_text,
+        })
+
+    return {
+        "name":               (v1_data.get("displayName") or {}).get("text", ""),
+        "rating":             v1_data.get("rating"),
+        "user_ratings_total": v1_data.get("userRatingCount"),
+        "opening_hours":      opening_hours,
+        "reviews":            reviews,
+    }
+
+
 def scrape_place(place_id: str, restaurant_id: str, session: Session) -> dict:
-    """Fetch Google Places details and write raw payload to raw_signals.
+    """Fetch Google Places details via API v1 and write raw payload to raw_signals.
+
+    Switched from the legacy maps.googleapis.com endpoint to places.googleapis.com/v1.
+    The key benefit is publishTime as an ISO 8601 string with timezone info, which is
+    more reliable than the legacy Unix int "time" field for days_since_last_review.
+    _extract_velocity_metrics() sorts reviews by _review_dt() so review order from
+    the API doesn't affect accuracy.
 
     SQLAlchemy sessions work like EF Core DbContext: call commit() to flush
     to the DB. Unlike EF Core, there's no change tracker — we write raw SQL
@@ -127,21 +193,44 @@ def scrape_place(place_id: str, restaurant_id: str, session: Session) -> dict:
     api_key = os.environ["GOOGLE_PLACES_API_KEY"]
 
     response = httpx.get(
-        _DETAIL_URL,
-        params={"place_id": place_id, "fields": _FIELDS, "key": api_key},
+        f"{_V1_BASE_URL}/{place_id}",
+        headers={
+            # v1 auth moves from query param "key=..." to this header.
+            "X-Goog-Api-Key":  api_key,
+            # FieldMask replaces the legacy "fields" query param.
+            "X-Goog-FieldMask": _V1_FIELD_MASK,
+        },
+        params={
+            "languageCode": "en",
+            # Note: reviews.rankPreference=NEWEST is only supported on Text Search
+            # and Nearby Search (POST body), not on Place Details (GET).
+            # _extract_velocity_metrics() sorts reviews by _review_dt() internally,
+            # so days_since_last_review is correct regardless of API return order.
+        },
         timeout=10.0,
     )
     response.raise_for_status()
-    payload = response.json()
+    v1_data = response.json()
 
-    if payload.get("status") not in ("OK", "ZERO_RESULTS"):
+    # v1 uses HTTP error codes (404, 400, etc.) rather than a "status" field
+    # in the body. raise_for_status() above already handles non-2xx responses.
+    # An "error" key in the body signals a partial or validation error.
+    if "error" in v1_data:
         raise RuntimeError(
-            f"Google Places API returned status {payload.get('status')!r} "
-            f"for place_id={place_id}"
+            f"Google Places API v1 error for place_id={place_id}: {v1_data['error']}"
         )
 
+    # Normalize v1 field names to the legacy schema so downstream consumers
+    # (scoring engine, hours monitor) need no changes.
+    result = _normalize_v1_response(v1_data)
+
+    payload = {
+        "result":      result,
+        "api_version": "v1",       # track which API version produced this signal
+        "place_id":    place_id,
+    }
+
     # Augment payload with velocity metrics derived from review timestamps.
-    result = payload.get("result", {})
     payload["velocity_metrics"] = _extract_velocity_metrics(result)
 
     session.execute(
@@ -160,7 +249,7 @@ def scrape_place(place_id: str, restaurant_id: str, session: Session) -> dict:
     session.commit()
 
     logger.info(
-        "Stored Google Places signal — place_id=%s rating=%s reviews=%s days_since_last=%s",
+        "Stored Google Places signal (v1) — place_id=%s rating=%s reviews=%s days_since_last=%s",
         place_id,
         result.get("rating"),
         result.get("user_ratings_total"),

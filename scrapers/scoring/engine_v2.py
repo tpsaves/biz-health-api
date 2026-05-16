@@ -97,6 +97,10 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     # Phase 6b enhanced velocity flags and adjustments
     review_gap_alert   = False
     one_star_spike     = False
+    # days_since_last_review is pre-computed by google_places.scrape_place()
+    # using _review_dt(), which handles both legacy "time" (Unix int) and
+    # the new Places API v1 "publishTime" (ISO 8601 string).
+    # C# equivalent: DateTime.Parse(publishTime, ...) vs DateTimeOffset.FromUnixTimeSeconds(time)
     days_since_last    = velocity_metrics.get("days_since_last_review")
     owner_resp_rate    = velocity_metrics.get("owner_response_rate", 0)
     one_star_pct_60d   = velocity_metrics.get("one_star_pct_60d")
