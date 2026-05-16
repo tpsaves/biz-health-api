@@ -26,6 +26,7 @@ from signals.tabc_license import scrape_license
 from signals.hours_monitor import scrape_hours
 from signals.sba_loans import scrape_sba_loans
 from signals.property_tax import scrape_property_tax
+from signals.delivery_platforms import scrape_delivery_platforms
 from scoring.engine_v2 import compute_scores_v2
 
 # load_dotenv is a no-op inside Docker (env vars already injected by docker-compose).
@@ -152,6 +153,28 @@ def run_property_tax_scrape() -> None:
     logger.info("[property_tax] job complete")
 
 
+def run_delivery_platforms_scrape() -> None:
+    """Check DoorDash and Uber Eats listing status for all tracked restaurants.
+
+    Runs weekly on Monday at 5:00 AM UTC — after health inspections and TABC
+    (Monday 4:00-4:30 AM UTC) so all operational signals are fresh before scoring.
+    No API key required — uses public consumer-facing search endpoints.
+    platform_unavailable results are logged but do not trigger scoring adjustments.
+    """
+    logger.info("[delivery_platforms] job started")
+    with Session(engine) as session:
+        for r in _get_restaurants(session):
+            rid = str(r.id)
+            try:
+                scrape_delivery_platforms(
+                    r.name, r.address or "", r.city or "", rid, session
+                )
+                logger.info("[delivery_platforms] %s — OK", r.name)
+            except Exception as exc:
+                logger.error("[delivery_platforms] %s — FAILED: %s", r.name, exc)
+    logger.info("[delivery_platforms] job complete")
+
+
 def run_outscraper_scrape() -> None:
     """Fetch Outscraper review history for all tracked restaurants.
 
@@ -269,6 +292,16 @@ def main() -> None:
         run_property_tax_scrape,
         CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="UTC"),
         id="property_tax_scrape",
+        coalesce=True,
+        max_instances=1,
+    )
+    # Delivery platforms: Monday 5:00 AM UTC — after health inspections and TABC
+    # (Monday 4:00-4:30 AM UTC). Runs on a separate day from Sunday scrapers so
+    # the weekly scoring cycle has complete signal data before scoring at 5 AM daily.
+    scheduler.add_job(
+        run_delivery_platforms_scrape,
+        CronTrigger(day_of_week="mon", hour=5, minute=0, timezone="UTC"),
+        id="delivery_platforms_scrape",
         coalesce=True,
         max_instances=1,
     )

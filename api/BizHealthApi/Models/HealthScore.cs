@@ -91,5 +91,21 @@ public class HealthScore
     [Column("tax_delinquency_years")]
     public int? TaxDelinquencyYears { get; set; }
 
+    // Phase 9: delivery platform listing status
+    [Column("doordash_listed")]
+    public bool? DoordashListed { get; set; }
+
+    [Column("ubereats_listed")]
+    public bool? UbereatsListed { get; set; }
+
+    [Column("delivery_platform_count")]
+    public int? DeliveryPlatformCount { get; set; }
+
+    [Column("delivery_status")]
+    public string? DeliveryStatus { get; set; }
+
+    [Column("delivery_platform_loss")]
+    public bool? DeliveryPlatformLoss { get; set; }
+
     public Restaurant? Restaurant { get; set; }
 }

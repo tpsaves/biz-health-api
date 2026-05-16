@@ -414,6 +414,12 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             sbaLatestStatus        = score.SbaLatestStatus,
             sbaLatestAmount        = score.SbaLatestAmount,
             taxDelinquencyYears    = score.TaxDelinquencyYears,
+            // Phase 9: delivery platform listing status
+            doordashListed         = score.DoordashListed,
+            ubereatsListed         = score.UbereatsListed,
+            deliveryPlatformCount  = score.DeliveryPlatformCount,
+            deliveryStatus         = score.DeliveryStatus,
+            deliveryPlatformLoss   = score.DeliveryPlatformLoss,
         },
         details = new
         {

@@ -76,6 +76,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     outscraper_row   = _latest("outscraper_reviews")
     sba_row          = _latest("sba_loans")
     prop_tax_row     = _latest("property_tax")
+    delivery_row     = _latest("delivery_platforms")
 
     # ── Base review data ───────────────────────────────────────────────────────
     google_review_count = 0
@@ -372,6 +373,65 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 financial_risk_score -= 20  # delinquent 1 year: -20
 
     financial_risk_score = max(0, financial_risk_score)
+
+    # ── delivery_platforms (Phase 9) ───────────────────────────────────────────
+    # Starts neutral. Adjustments applied only when platform data is conclusive.
+    # platform_unavailable means we could not reach the platform — no adjustment.
+    doordash_listed:         Optional[bool] = None
+    ubereats_listed:         Optional[bool] = None
+    delivery_platform_count: Optional[int]  = None
+    delivery_status:         str            = "unknown"
+    delivery_platform_loss:  bool           = False
+
+    if delivery_row:
+        dp  = delivery_row.payload
+        dd  = dp.get("doordash", {})
+        ue  = dp.get("ubereats", {})
+
+        # Only treat a result as conclusive when status is not platform_unavailable.
+        dd_conclusive = dd.get("status") not in (None, "platform_unavailable")
+        ue_conclusive = ue.get("status") not in (None, "platform_unavailable")
+
+        if dd_conclusive:
+            doordash_listed = dd.get("listed", False)
+        if ue_conclusive:
+            ubereats_listed = ue.get("listed", False)
+
+        listed_count = sum(1 for v in [doordash_listed, ubereats_listed] if v is True)
+        any_conclusive = dd_conclusive or ue_conclusive
+
+        if any_conclusive:
+            delivery_platform_count = listed_count
+
+        # delivery_platform_loss is true when the scraper detected a previous
+        # listing that has since disappeared on one or both platforms.
+        delivery_platform_loss = (
+            dp.get("delisted_doordash", False) or dp.get("delisted_ubereats", False)
+        )
+
+        # Determine delivery_status.
+        if not any_conclusive:
+            delivery_status = "unknown"
+        elif delivery_platform_loss:
+            delivery_status = "offline"
+        elif listed_count == 2:
+            delivery_status = "active"
+        elif listed_count == 1:
+            delivery_status = "partial"
+        else:
+            delivery_status = "never_listed"
+
+        # Apply operational_score adjustments.
+        if delivery_status == "active":
+            operational_score = min(100, operational_score + 5)
+        elif delivery_status == "offline":
+            # Was listed before but now gone — strong distress signal.
+            operational_score    = max(0, operational_score - 20)
+        elif delivery_status == "never_listed":
+            # Never listed on any reachable platform.
+            operational_score    = max(0, operational_score - 10)
+        # partial:  no change
+        # unknown:  no adjustment (platform_unavailable)
 
     # ── overall_score ──────────────────────────────────────────────────────────
     overall_score = int(
@@ -684,6 +744,57 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "flag":   None,
         })
 
+    # ── delivery_platform factors (added to operational) ──────────────────────
+    if delivery_row:
+        dd  = delivery_row.payload.get("doordash", {})
+        ue  = delivery_row.payload.get("ubereats", {})
+
+        def _platform_factor(platform_label: str, result: dict, delisted: bool) -> dict:
+            status = result.get("status")
+            if status == "platform_unavailable":
+                return {
+                    "signal": "delivery_platforms",
+                    "label":  f"{platform_label} listing",
+                    "value":  "Data unavailable",
+                    "impact": "neutral",
+                    "weight": "medium",
+                    "flag":   None,
+                }
+            elif result.get("listed"):
+                return {
+                    "signal": "delivery_platforms",
+                    "label":  f"{platform_label} listing",
+                    "value":  "Active",
+                    "impact": "positive",
+                    "weight": "medium",
+                    "flag":   None,
+                }
+            elif delisted:
+                return {
+                    "signal": "delivery_platforms",
+                    "label":  f"{platform_label} listing",
+                    "value":  "Removed (was active)",
+                    "impact": "negative",
+                    "weight": "medium",
+                    "flag":   "delivery_platform_loss",
+                }
+            else:
+                return {
+                    "signal": "delivery_platforms",
+                    "label":  f"{platform_label} listing",
+                    "value":  "Not listed",
+                    "impact": "negative",
+                    "weight": "medium",
+                    "flag":   None,
+                }
+
+        operational_factors.append(
+            _platform_factor("DoorDash", dd, delivery_row.payload.get("delisted_doordash", False))
+        )
+        operational_factors.append(
+            _platform_factor("Uber Eats", ue, delivery_row.payload.get("delisted_ubereats", False))
+        )
+
     score_factors = {
         "reviewVelocity": review_velocity_factors,
         "ratingTrend":    rating_trend_factors,
@@ -716,7 +827,10 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 financial_risk_score,  sba_default,
                 repeated_sba_borrowing, tax_delinquent,
                 sba_loan_count,        sba_latest_status,
-                sba_latest_amount,     tax_delinquency_years
+                sba_latest_amount,     tax_delinquency_years,
+                doordash_listed,       ubereats_listed,
+                delivery_platform_count, delivery_status,
+                delivery_platform_loss
             ) VALUES (
                 :restaurant_id,
                 :review_velocity_score, :rating_trend_score,
@@ -731,36 +845,44 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 :financial_risk_score,  :sba_default,
                 :repeated_sba_borrowing, :tax_delinquent,
                 :sba_loan_count,        :sba_latest_status,
-                :sba_latest_amount,     :tax_delinquency_years
+                :sba_latest_amount,     :tax_delinquency_years,
+                :doordash_listed,       :ubereats_listed,
+                :delivery_platform_count, :delivery_status,
+                :delivery_platform_loss
             )
             """
         ),
         {
-            "restaurant_id":            restaurant_id,
-            "review_velocity_score":    review_velocity_score,
-            "rating_trend_score":       rating_trend_score,
-            "operational_score":        operational_score,
-            "overall_score":            overall_score,
-            "score_factors":            json.dumps(score_factors),
-            "review_gap_alert":         review_gap_alert,
-            "one_star_spike":           one_star_spike,
-            "rating_deterioration":     rating_deterioration,
-            "source_divergence":        source_divergence,
-            "ninety_day_slope":         ninety_day_slope,
-            "days_since_last_review":   days_since_last,
-            "owner_response_rate":      owner_resp_rate,
-            "monthly_volume_trend":     monthly_volume_trend,
-            "review_count_confidence":  review_count_confidence,
-            "seasonality_adjusted":     seasonality_adjusted,
-            "comparison_method":        comparison_method,
-            "financial_risk_score":     financial_risk_score,
-            "sba_default":              sba_default,
-            "repeated_sba_borrowing":   repeated_sba_borrowing,
-            "tax_delinquent":           tax_delinquent,
-            "sba_loan_count":           sba_loan_count,
-            "sba_latest_status":        sba_latest_status_val,
-            "sba_latest_amount":        sba_latest_amount_val,
-            "tax_delinquency_years":    tax_delinquency_years,
+            "restaurant_id":             restaurant_id,
+            "review_velocity_score":     review_velocity_score,
+            "rating_trend_score":        rating_trend_score,
+            "operational_score":         operational_score,
+            "overall_score":             overall_score,
+            "score_factors":             json.dumps(score_factors),
+            "review_gap_alert":          review_gap_alert,
+            "one_star_spike":            one_star_spike,
+            "rating_deterioration":      rating_deterioration,
+            "source_divergence":         source_divergence,
+            "ninety_day_slope":          ninety_day_slope,
+            "days_since_last_review":    days_since_last,
+            "owner_response_rate":       owner_resp_rate,
+            "monthly_volume_trend":      monthly_volume_trend,
+            "review_count_confidence":   review_count_confidence,
+            "seasonality_adjusted":      seasonality_adjusted,
+            "comparison_method":         comparison_method,
+            "financial_risk_score":      financial_risk_score,
+            "sba_default":               sba_default,
+            "repeated_sba_borrowing":    repeated_sba_borrowing,
+            "tax_delinquent":            tax_delinquent,
+            "sba_loan_count":            sba_loan_count,
+            "sba_latest_status":         sba_latest_status_val,
+            "sba_latest_amount":         sba_latest_amount_val,
+            "tax_delinquency_years":     tax_delinquency_years,
+            "doordash_listed":           doordash_listed,
+            "ubereats_listed":           ubereats_listed,
+            "delivery_platform_count":   delivery_platform_count,
+            "delivery_status":           delivery_status,
+            "delivery_platform_loss":    delivery_platform_loss,
         },
     )
     session.commit()
@@ -798,9 +920,17 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         "sba_latest_status":       sba_latest_status_val,
         "sba_latest_amount":       sba_latest_amount_val,
         "tax_delinquency_years":   tax_delinquency_years,
+        # Phase 9 delivery platform flags
+        "doordash_listed":          doordash_listed,
+        "ubereats_listed":          ubereats_listed,
+        "delivery_platform_count":  delivery_platform_count,
+        "delivery_status":          delivery_status,
+        "delivery_platform_loss":   delivery_platform_loss,
     }
     logger.info(
-        "v2 scored restaurant_id=%s overall=%s financial=%s sba_default=%s tax_delinquent=%s",
-        restaurant_id, overall_score, financial_risk_score, sba_default, tax_delinquent,
+        "v2 scored restaurant_id=%s overall=%s financial=%s sba_default=%s "
+        "tax_delinquent=%s delivery_status=%s delivery_loss=%s",
+        restaurant_id, overall_score, financial_risk_score, sba_default,
+        tax_delinquent, delivery_status, delivery_platform_loss,
     )
     return scores

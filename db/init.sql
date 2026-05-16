@@ -52,7 +52,14 @@ CREATE TABLE IF NOT EXISTS health_scores (
     sba_loan_count            INT,
     sba_latest_status         VARCHAR,
     sba_latest_amount         DECIMAL,
-    tax_delinquency_years     INT
+    tax_delinquency_years     INT,
+
+    -- Phase 9: delivery platform listing status (DoorDash + Uber Eats)
+    doordash_listed           BOOLEAN,
+    ubereats_listed           BOOLEAN,
+    delivery_platform_count   INT,        -- 0, 1, or 2 active platforms
+    delivery_status           VARCHAR,    -- active, partial, offline, never_listed, unknown
+    delivery_platform_loss    BOOLEAN     -- true if was listed before but now offline
 );
 
 CREATE INDEX IF NOT EXISTS idx_raw_signals_restaurant_id  ON raw_signals(restaurant_id);

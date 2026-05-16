@@ -353,17 +353,28 @@
     }
     .btn-unpin:hover { border-color: var(--red); color: var(--red); }
 
-    /* ── Warning badges (Phase 6b + Phase 8) ────────────────────────────── */
+    /* ── Warning badges (Phase 6b + Phase 8 + Phase 9) ──────────────────── */
     .warn-badges   { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .warn-badge {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 12px; font-weight: 600; padding: 4px 10px;
       border-radius: 20px; border: 1.5px solid;
     }
-    .warn-badge-review    { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
-    .warn-badge-rating    { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-    .warn-badge-source    { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-    .warn-badge-financial { background: #fef2f2; color: #7f1d1d; border-color: #fca5a5; }
+    .warn-badge-review      { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+    .warn-badge-rating      { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .warn-badge-source      { background: #fffbeb; color: #b45309; border-color: #fde68a; }
+    .warn-badge-financial   { background: #fef2f2; color: #7f1d1d; border-color: #fca5a5; }
+    .warn-badge-operational { background: #fdf4ff; color: #7e22ce; border-color: #d8b4fe; }
+    /* ── Delivery platform badges (Phase 9) ─────────────────────────────── */
+    .delivery-badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px; }
+    .delivery-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 12px; font-weight: 600; padding: 3px 10px;
+      border-radius: 14px; border: 1.5px solid;
+    }
+    .delivery-badge-active  { background: #f0fdf4; color: #15803d; border-color: #86efac; }
+    .delivery-badge-unlisted { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .delivery-badge-unknown { background: #f8fafc; color: #64748b; border-color: #cbd5e1; }
 
     /* ── Sparkline (Phase 6b) ────────────────────────────────────────────── */
     .sparkline-wrap    { margin: 8px 0 4px; }
@@ -666,18 +677,63 @@
     return html;
   }
 
-  // ── Phase 6b + 8: Warning badges ─────────────────────────────────────────
+  // ── Phase 6b + 8 + 9: Warning badges ────────────────────────────────────
   function renderWarningBadges(s) {
     const badges = [];
-    if (s.reviewGapAlert)      badges.push(`<span class="warn-badge warn-badge-review">⚠ Review Gap</span>`);
-    if (s.oneStarSpike)        badges.push(`<span class="warn-badge warn-badge-rating">⚠ 1-Star Spike</span>`);
-    if (s.ratingDeterioration) badges.push(`<span class="warn-badge warn-badge-rating">⚠ Rating Decline</span>`);
-    if (s.sourceDivergence)    badges.push(`<span class="warn-badge warn-badge-source">⚠ Source Divergence</span>`);
-    if (s.sbaDefault)          badges.push(`<span class="warn-badge warn-badge-financial">⚠ SBA Loan Default</span>`);
+    if (s.reviewGapAlert)        badges.push(`<span class="warn-badge warn-badge-review">⚠ Review Gap</span>`);
+    if (s.oneStarSpike)          badges.push(`<span class="warn-badge warn-badge-rating">⚠ 1-Star Spike</span>`);
+    if (s.ratingDeterioration)   badges.push(`<span class="warn-badge warn-badge-rating">⚠ Rating Decline</span>`);
+    if (s.sourceDivergence)      badges.push(`<span class="warn-badge warn-badge-source">⚠ Source Divergence</span>`);
+    if (s.sbaDefault)            badges.push(`<span class="warn-badge warn-badge-financial">⚠ SBA Loan Default</span>`);
     if (s.taxDelinquent && (s.taxDelinquencyYears ?? 0) >= 2)
-                               badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent ${s.taxDelinquencyYears}yr</span>`);
-    else if (s.taxDelinquent)  badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent</span>`);
+                                 badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent ${s.taxDelinquencyYears}yr</span>`);
+    else if (s.taxDelinquent)    badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent</span>`);
+    if (s.deliveryPlatformLoss)  badges.push(`<span class="warn-badge warn-badge-operational">⚠ Platform Delisted</span>`);
     return badges.length ? `<div class="warn-badges">${badges.join('')}</div>` : '';
+  }
+
+  // ── Phase 9: Delivery platform status badges ──────────────────────────────
+  function _deliveryBadge(label, listed) {
+    if (listed === true)  return `<span class="delivery-badge delivery-badge-active">${label} Active</span>`;
+    if (listed === false) return `<span class="delivery-badge delivery-badge-unlisted">${label} Not Listed</span>`;
+    return `<span class="delivery-badge delivery-badge-unknown">${label} Unknown</span>`;
+  }
+
+  function renderDeliverySupplemental(s) {
+    // Only show the panel when we have at least one conclusive result.
+    const hasDd = s.doordashListed !== undefined && s.doordashListed !== null;
+    const hasUe = s.ubeatsListed   !== undefined && s.ubeatsListed   !== null;
+    // Also check camelCase variant the API may return (ubereatsListed vs ubeatsListed).
+    const ddListed = s.doordashListed ?? null;
+    const ueListed = s.ubereatsListed ?? s.ubeatsListed ?? null;
+
+    if (ddListed === null && ueListed === null) return '';
+
+    const rows = [];
+
+    rows.push(`<div class="delivery-badges">
+      ${_deliveryBadge('DoorDash',  ddListed)}
+      ${_deliveryBadge('Uber Eats', ueListed)}
+    </div>`);
+
+    const statusLabels = {
+      active:       'Listed on both platforms',
+      partial:      'Listed on one platform',
+      offline:      'Removed from platforms (was active)',
+      never_listed: 'Not listed on delivery platforms',
+      unknown:      'Platform data unavailable',
+    };
+    const ds = s.deliveryStatus;
+    if (ds && ds !== 'unknown') {
+      const dsLabel = statusLabels[ds] || ds;
+      const dsColor = ds === 'active' ? 'var(--green)' : ds === 'partial' ? 'var(--amber)' : 'var(--red)';
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Delivery status</span><span class="suppl-val" style="color:${dsColor}">${dsLabel}</span></div>`);
+    }
+    if (s.deliveryPlatformLoss) {
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Platform change</span><span class="suppl-val recency-red">⚠ Delisted since last check — potential distress signal</span></div>`);
+    }
+
+    return `<div class="suppl-panel">${rows.join('')}</div>`;
   }
 
   // ── Phase 6b: Sparkline bar chart ─────────────────────────────────────────
@@ -891,9 +947,10 @@
     const rvSuppl  = renderVelocitySupplemental(s, ev.monthlyReviewCounts, ev.dataCollectionStart);
     const rtSuppl  = renderRatingSupplemental(s);
     const finSuppl = renderFinancialSupplemental(s);
+    const opSuppl  = renderDeliverySupplemental(s);
     const rvBlock  = componentBlock(data.id, 'rv',  'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSuppl,  renderGoogleEvidence(ev));
     const rtBlock  = componentBlock(data.id, 'rt',  'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSuppl,  renderRatingEvidence(ev));
-    const opBlock  = componentBlock(data.id, 'op',  'Operational Health', s.operationalScore,    sf.operational,    '',       renderInspectionEvidence(ev));
+    const opBlock  = componentBlock(data.id, 'op',  'Operational Health', s.operationalScore,    sf.operational,    opSuppl,  renderInspectionEvidence(ev));
     const finBlock = componentBlock(data.id, 'fin', 'Financial Risk',     s.financialRiskScore,  sf.financial,      finSuppl, '');
 
     return `
@@ -973,9 +1030,10 @@
     const rvSupplC  = renderVelocitySupplemental(s, ev.monthlyReviewCounts, ev.dataCollectionStart);
     const rtSupplC  = renderRatingSupplemental(s);
     const finSupplC = renderFinancialSupplemental(s);
+    const opSupplC  = renderDeliverySupplemental(s);
     const rvBlock  = componentBlock(data.id, `cmp${index}rv`,  'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSupplC,  renderGoogleEvidence(ev));
     const rtBlock  = componentBlock(data.id, `cmp${index}rt`,  'Rating Trend',       s.ratingTrendScore,    sf.ratingTrend,    rtSupplC,  renderRatingEvidence(ev));
-    const opBlock  = componentBlock(data.id, `cmp${index}op`,  'Operational Health', s.operationalScore,    sf.operational,    '',        renderInspectionEvidence(ev));
+    const opBlock  = componentBlock(data.id, `cmp${index}op`,  'Operational Health', s.operationalScore,    sf.operational,    opSupplC,  renderInspectionEvidence(ev));
     const finBlock = componentBlock(data.id, `cmp${index}fin`, 'Financial Risk',     s.financialRiskScore,  sf.financial,      finSupplC, '');
 
     return `

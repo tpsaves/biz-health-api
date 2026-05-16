@@ -14,7 +14,7 @@ who need to assess the risk of small restaurant businesses before extending cred
 | `api` | .NET 9 Web API + EF Core | Serves health scores and restaurant data via REST |
 | `scrapers` | Python 3.11 + SQLAlchemy + APScheduler | Collects and stores raw signals on a schedule |
 | `db` | PostgreSQL 17 | Shared data store |
-| `demo` | nginx:alpine | Serves the single-page demo UI at http://localhost:3000 |
+| `demo` | nginx:alpine serving /demo/index.html | Customer-facing demo UI at http://localhost:3000 |
 
 ### Project Structure
 ```
@@ -31,11 +31,15 @@ who need to assess the risk of small restaurant businesses before extending cred
     scheduler_config.py
     requirements.txt
     /signals
-      google_places.py
-      foursquare.py
-      health_inspections.py
-      tabc_license.py
+      google_places.py         # Google Places API v1
+      foursquare.py            # Inactive — free tier returns no venue details
+      health_inspections.py    # All 10 DFW cities routed to correct health authority
+      tabc_license.py          # Texas Open Data Portal — covers all TX cities
       hours_monitor.py
+      outscraper_reviews.py    # Primary review recency source — weekly Sunday 1AM UTC
+      sba_loans.py             # SBA 7(a) and 504 loan data via Data.gov
+      property_tax.py          # County appraisal district business personal property tax
+      delivery_platforms.py    # DoorDash + Uber Eats listing status (platform_unavailable in Docker)
     /scoring
       engine.py
       seasonality.py
@@ -54,8 +58,8 @@ who need to assess the risk of small restaurant businesses before extending cred
 - Postgres hostname inside Docker network is `db`
 - Postgres exposed to Windows host at `localhost:5432` for GUI tools
 - API runs on port 8080
-- Demo UI served by nginx on port 3000 — no separate Python server needed
-- All containers use restart: unless-stopped
+- Demo UI served via nginx at http://localhost:3000 (must use HTTP not file://)
+- Scrapers container restarts automatically (restart: unless-stopped)
 
 ---
 
@@ -73,6 +77,9 @@ who need to assess the risk of small restaurant businesses before extending cred
 
 **raw_signals** — source, payload JSONB, scraped_at UTC
 
+Sources: google_places, outscraper_reviews, foursquare (inactive), health_inspection,
+tabc_license, hours_monitor, sba_loans, property_tax, delivery_platforms, {source}_error
+
 **health_scores**
 ```sql
 -- Score components
@@ -80,6 +87,7 @@ review_velocity_score     int,
 rating_trend_score        int,
 operational_score         int,
 staffing_score            int,        -- null, placeholder for future job posting signal
+financial_risk_score      int,
 overall_score             int,
 
 -- Trend analysis (Phase 3b)
@@ -98,16 +106,31 @@ rating_deterioration      boolean,
 source_divergence         boolean,
 ninety_day_slope          varchar,    -- improving, stable, declining, sharp_decline, insufficient_data
 days_since_last_review    int,
-owner_response_rate       int,        -- percentage 0-100, requires 10+ reviews
+owner_response_rate       int,
 monthly_volume_trend      varchar,    -- growing, stable, declining, sharply_declining, insufficient_data
 review_count_confidence   varchar,    -- high, medium, low
 seasonality_adjusted      boolean,
 comparison_method         varchar,    -- year_over_year, period_comparison, insufficient_data
-
--- Confidence gates (Phase 6c)
 volume_trend_confidence   varchar,    -- sufficient, insufficient_data
+recency_source            varchar,    -- outscraper, google_places
 
--- Score factors (Phase 6)
+-- Financial risk (Phase 8)
+sba_default               boolean,
+repeated_sba_borrowing    boolean,
+tax_delinquent            boolean,
+sba_loan_count            int,
+sba_latest_status         varchar,    -- active, paid_in_full, charged_off, none_found
+sba_latest_amount         decimal,
+tax_delinquency_years     int,
+
+-- Delivery platforms (Phase 9)
+doordash_listed           boolean,
+ubereats_listed           boolean,
+delivery_platform_count   int,        -- 0, 1, or 2
+delivery_status           varchar,    -- active, partial, offline, never_listed, unknown
+delivery_platform_loss    boolean,
+
+-- Score factors
 score_factors             JSONB,
 
 scored_at                 timestamptz
@@ -117,17 +140,19 @@ scored_at                 timestamptz
 - Active TABC suspension or expiration: caps overall_score at 40
 - Critical health inspection failure (score < 60): caps overall_score at 50
 - license_history_risk true: caps overall_score at 65
+- sba_default true: caps overall_score at 45
+- tax_delinquent 2+ years: caps overall_score at 55
 
 ### Confidence Gates
 Minimum 10 data points required before applying scoring adjustments.
 Applies to: monthly_volume_trend, ninety_day_slope, recent_vs_lifetime_gap, owner_response_rate.
-Fewer than 10 points sets field to insufficient_data with zero penalty or bonus.
 insufficient_data never triggers a red warning badge in the demo UI.
 
 ### overall_score Weights
-- review_velocity_score: 25%
-- rating_trend_score: 35%
-- operational_score: 40%
+- review_velocity_score: 20%
+- rating_trend_score: 30%
+- operational_score: 30%
+- financial_risk_score: 20%
 
 ### Score Risk Bands
 - 80-100: Low risk (green)
@@ -139,7 +164,7 @@ insufficient_data never triggers a red warning badge in the demo UI.
 - All tables use snake_case
 - All timestamps UTC
 - Raw payloads stored as JSONB
-- Never use localhost in connection strings inside containers — always use service name db
+- Never use localhost in connection strings inside containers
 
 ---
 
@@ -161,43 +186,59 @@ insufficient_data never triggers a red warning badge in the demo UI.
 - POST /api/v1/restaurants/search-and-score — name + address + city, cached or fresh score in 30s
 
 ### search-and-score Behavior
+- Uses findplacefromtext with full name+address string for single precise match
+- Single high-confidence match: skips disambiguation, goes straight to scoring
+- Multiple matches: returns disambiguation list
 - Scored within 24 hours: return cached score
 - Stale score: trigger fresh run
 - Not found: trigger full onboarding pipeline
 - Timeout: 30 seconds, returns partial result
-- Multiple matches: return disambiguation list
 
 ### Score API Response Shape
 ```json
 {
-  "overallScore": 93,
-  "reviewVelocityScore": 100,
+  "overallScore": 88,
+  "reviewVelocityScore": 70,
   "ratingTrendScore": 85,
   "operationalScore": 95,
+  "financialRiskScore": 100,
   "staffingScore": null,
   "licenseStatus": "active",
   "licenseHistoryRisk": false,
   "licenseExpiryDate": "2027-03-15",
-  "inspectionTrend": "stable",
+  "inspectionTrend": "improving",
   "lastInspectionDate": "2026-02-10",
-  "lastInspectionScore": 94,
+  "lastInspectionScore": 100,
   "hoursChangeCount": 0,
   "reviewGapAlert": false,
   "oneStarSpike": false,
   "ratingDeterioration": false,
   "sourceDivergence": false,
-  "ninetyDaySlope": "insufficient_data",
-  "daysSinceLastReview": 4,
+  "ninetyDaySlope": "stable",
+  "daysSinceLastReview": 15,
+  "recencySource": "outscraper",
   "ownerResponseRate": null,
-  "monthlyVolumeTrend": "insufficient_data",
+  "monthlyVolumeTrend": "sharply_declining",
   "reviewCountConfidence": "high",
   "seasonalityAdjusted": true,
-  "comparisonMethod": "insufficient_data",
-  "volumeTrendConfidence": "insufficient_data",
+  "comparisonMethod": "year_over_year",
+  "volumeTrendConfidence": "sufficient",
+  "sbaDefault": false,
+  "repeatedSbaBorrowing": false,
+  "taxDelinquent": false,
+  "sbaLoanCount": 0,
+  "sbaLatestStatus": "none_found",
+  "taxDelinquencyYears": 0,
+  "doordashListed": null,
+  "uberEatsListed": null,
+  "deliveryPlatformCount": null,
+  "deliveryStatus": "unknown",
+  "deliveryPlatformLoss": false,
   "scoreFactors": {
     "operational": [],
     "reviewVelocity": [],
-    "ratingTrend": []
+    "ratingTrend": [],
+    "financialRisk": []
   }
 }
 ```
@@ -214,55 +255,79 @@ insufficient_data never triggers a red warning badge in the demo UI.
 - Max retries: 3, timeout: 60 seconds per restaurant per scraper
 - Failed jobs write error record to raw_signals with source {source}_error
 - Add comments explaining Python patterns that differ from C#
+- thefuzz library used for fuzzy name matching in SBA, property tax, and delivery platform scrapers
 
 ### Signal Sources
-| Signal | Weight | Source | Key Required |
-|---|---|---|---|
-| Google review velocity | High | Google Places API | Yes |
-| Google rating trend | High | Google Places API | Yes |
-| Foursquare rating | Medium | Foursquare Places API | Yes (fsq3...) |
-| Health inspections | High | City/county portals for all 10 DFW cities | No |
-| TABC license | High | Texas Open Data Portal | No |
-| Hours consistency | Medium | Google Places snapshots | No |
-| Outscraper review history | High | Outscraper Google Maps Reviews API | Yes (OUTSCRAPER_API_KEY) |
-| Job postings | Medium | Placeholder — not yet built | TBD |
-| Website uptime | Low | Direct HTTP check | No |
+| Signal | Weight | Source | Key Required | Notes |
+|---|---|---|---|---|
+| Google review velocity | High | Google Places API v1 | Yes | 5 reviews, not date-sorted — Outscraper is primary recency source |
+| Google rating trend | High | Google Places API v1 | Yes | |
+| Outscraper reviews | High | Outscraper | Yes | Primary recency source, date-sorted, free tier = 3 reviews/call |
+| Foursquare rating | Medium | Foursquare Places API | Yes (fsq3...) | Inactive — free tier returns no venue details |
+| Health inspections | High | See city routing table | No | |
+| TABC license | High | Texas Open Data Portal | No | Covers all TX cities |
+| Hours consistency | Medium | Google Places snapshots | No | |
+| SBA loan history | High | SBA Data.gov API | No | Fuzzy name matching, min score 80 |
+| Property tax | High | County CAD portals | No | Fuzzy name matching, may return no_data_available |
+| Delivery platforms | Medium | DoorDash + Uber Eats public search | No | Returns platform_unavailable from Docker due to bot detection |
+| Job postings | Medium | Placeholder — not yet built | TBD | |
+| Website uptime | Low | Direct HTTP check | No | |
 
-### Google Places API
-- **Endpoint**: Places API v1 (`https://places.googleapis.com/v1/places/{place_id}`)
-- Auth: `X-Goog-Api-Key` header (not query param `key=`)
-- Fields: `X-Goog-FieldMask` header — `id,displayName,rating,userRatingCount,currentOpeningHours,regularOpeningHours,reviews`
-- Returns maximum 5 reviews per request in Google's default (relevance) order
-- `reviews[].publishTime` is ISO 8601 with nanosecond precision (e.g. `2026-02-25T18:47:51.391323873Z`)
-- `_review_dt()` in `google_places.py` handles both `publishTime` (v1) and `time` (Unix int, legacy) for backward compatibility with existing raw_signals
-- `_extract_velocity_metrics()` sorts reviews by `_review_dt()` internally — `days_since_last_review` is accurate regardless of API return order
-- `api_version: "v1"` stored in every raw_signals payload going forward
-- Note: `reviews.rankPreference=NEWEST` is NOT supported on Place Details — only on Text/Nearby Search POST body. Attempting it returns HTTP 400.
-- True monthly volume history cannot be reconstructed from API alone
-- Outscraper (Phase 7) solves this: fetches up to 520 reviews with timestamps for real monthly breakdowns
-- Year-over-year comparison uses Outscraper data when available; falls back to period comparison with DFW seasonal normalization
-- Confidence gate: minimum 10 data points required before applying trend penalties
+### Health Inspection City Routing
+| City | Health Authority | Portal |
+|---|---|---|
+| Dallas | City of Dallas | inspections.myhealthdepartment.com/dallas |
+| Fort Worth | Tarrant County Public Health | inspections.myhealthdepartment.com/tarrant |
+| Arlington | Tarrant County Public Health | inspections.myhealthdepartment.com/tarrant |
+| Grand Prairie | Tarrant County Public Health | inspections.myhealthdepartment.com/tarrant |
+| Plano | City of Plano / Collin County | inspections.myhealthdepartment.com/plano |
+| Frisco | Collin County | inspections.myhealthdepartment.com/plano |
+| McKinney | Collin County | inspections.myhealthdepartment.com/plano |
+| Irving | Dallas County Health | Dallas County portal — no_inspection_data |
+| Garland | Dallas County Health | Dallas County portal — no_inspection_data |
+| Denton | Denton County | Denton County portal — no_inspection_data |
+
+### Property Tax CAD Routing
+| City | CAD | URL |
+|---|---|---|
+| Dallas, Irving, Garland | Dallas CAD | dallascad.org |
+| Fort Worth, Arlington, Grand Prairie | Tarrant CAD | tad.org |
+| Plano, Frisco, McKinney | Collin CAD | collincad.org |
+| Denton | Denton CAD | dentoncad.com |
+
+### Google Places API Limitation
+Returns maximum 5 reviews per request. rankPreference: NEWEST is NOT supported on the
+Place Details endpoint (causes HTTP 400). Reviews sorted internally by _review_dt().
+Outscraper is primary recency source. Future fix: upgrade Outscraper paid tier.
+
+### Review Recency Priority
+1. Outscraper reviews (date-sorted, primary) — uses most recent review_datetime_utc
+2. Google Places v1 (fallback) — uses most recent publishTime after internal sort
+Scoring engine takes minimum of both values.
+
+### Delivery Platform Known Issue
+DoorDash and Uber Eats block headless HTTP requests from Docker (401/404).
+Scraper returns platform_unavailable — correctly excluded from scoring adjustments.
+Future fix options: SerpApi Google Shopping, Playwright browser automation.
+Infrastructure and DB columns are in place — ready when data source is resolved.
 
 ### Seasonality Adjustment
-Defined in /scrapers/scoring/seasonality.py using DFW industry seasonal factors:
+Defined in /scrapers/scoring/seasonality.py:
 - January: 0.80, February: 0.90, March: 1.05, April: 1.10, May: 1.10
 - June: 1.05, July: 0.95, August: 0.90, September: 1.05
 - October: 1.15, November: 1.10, December: 1.15
-- Year-over-year used when 12 months available, period comparison with normalization as fallback
 
 ### Scraper Schedule
-- Google Places + Foursquare: daily 2:00-2:30 AM UTC
+- Google Places: daily 2:00 AM UTC
+- Foursquare (inactive): daily 2:30 AM UTC
 - Hours monitor: daily 3:00 AM UTC
-- Health inspections + TABC: weekly Monday 4:00-4:30 AM UTC
-- Outscraper review history: weekly Sunday 1:00 AM UTC (before Sunday scoring run; pay-per-use)
 - Scoring engine: daily 5:00 AM UTC
+- Outscraper reviews: weekly Sunday 1:00 AM UTC
+- SBA loans: weekly Sunday 1:30 AM UTC
+- Property tax: weekly Sunday 2:00 AM UTC
+- Delivery platforms: weekly Monday 5:00 AM UTC
+- Health inspections + TABC: weekly Monday 4:00-4:30 AM UTC
 - New restaurant check: every 10 minutes
-
-### Review History Strategy
-- Outscraper (weekly) fetches up to 520 reviews with timestamps → real monthly_breakdown in raw_signals
-- Scoring engine prefers Outscraper monthly_breakdown for year_over_year comparison
-- Fallback: daily Google Places snapshots accumulate over time for period_comparison
-- Seasonal normalization applied to all period comparisons
 
 ### Onboarding
 - Bulk CSV onboarding (columns: name, address, city, zip)
@@ -272,31 +337,42 @@ Defined in /scrapers/scoring/seasonality.py using DFW industry seasonal factors:
 
 ---
 
-## Demo UI (/demo/index.html)
+## Demo UI (http://localhost:3000)
 
-- Single self-contained HTML/CSS/JS file, no build tools
-- Served by nginx:alpine at http://localhost:3000 (docker-compose demo service)
-- Calls .NET API at http://localhost:8080 — resolved by the browser on the host, not from inside the container
+- Single self-contained HTML/CSS/JS file at /demo/index.html
+- Served via nginx container — must use http://localhost:3000, NOT file://
+- Calls .NET API at http://localhost:8080
 - Search: Restaurant Name (required), Address or Zip (required), City (optional dropdown)
 - Supported cities: Dallas, Fort Worth, Arlington, Plano, Frisco, McKinney, Denton, Irving, Garland, Grand Prairie
-- Health inspection coverage: all 10 DFW cities (routing per city to correct health authority)
+
+### Four Component Score Bars
+- Review Velocity (20% weight)
+- Rating Trend (30% weight)
+- Operational Health (30% weight)
+- Financial Risk (20% weight)
 
 ### Three Level Score Display
-- Level 1: overall score, component bars, color risk indicator, plain English recommendation
-- Level 2: expandable signal breakdown per component with impact indicators
-- Level 3: raw evidence — inspection records, TABC details, Google/Foursquare data
+- Level 1: overall score, four component bars, color risk indicator, plain English recommendation
+- Level 2: expandable signal breakdown per component with impact indicators and warning badges
+- Level 3: raw evidence — inspection records, TABC details, Google/Outscraper data, SBA/tax records
 
 ### Warning Badges
 - Only shown for confirmed negative signals with sufficient data
 - Never shown for insufficient_data
-- Gray neutral indicator with tooltip for insufficient_data fields
+- Active flags: review_gap_alert, one_star_spike, rating_deterioration, source_divergence,
+  sba_default, repeated_sba_borrowing, tax_delinquent, delivery_platform_loss
+
+### Sparkline
+- Shows last 6 months of review volume
+- 3-character month abbreviations: Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec
+- Zero-review months: 8px gray outlined bar with hover tooltip
+- Seasonal adjustment note below sparkline
 
 ### Features
 - Recently scored list (last 5)
 - Side-by-side comparison of 2 restaurants with difference highlighting
 - Disambiguation list for multiple matches
-- Monthly review sparkline (12 months where available)
-- Seasonal adjustment note below sparkline
+- Plain English risk recommendation per risk band
 
 ---
 
@@ -310,14 +386,16 @@ POSTGRES_USER=admin
 POSTGRES_PASSWORD=
 
 GOOGLE_PLACES_API_KEY=
-FOURSQUARE_API_KEY=        # must start with fsq3...
+FOURSQUARE_API_KEY=        # must start with fsq3... (inactive)
 OUTSCRAPER_API_KEY=
+TRIPADVISOR_API_KEY=       # not yet built
 ANTHROPIC_API_KEY=
 
 ASPNETCORE_ENVIRONMENT=Development
 ```
 
-Note: Health inspection and TABC scrapers require no API keys — both use free public data portals.
+Note: Health inspections, TABC, SBA loans require no API keys — free public data.
+Delivery platforms require no API key but are blocked by bot detection in Docker.
 
 ---
 
@@ -327,8 +405,10 @@ Note: Health inspection and TABC scrapers require no API keys — both use free 
   - Async/await differences from C#
   - SQLAlchemy session management vs EF Core DbContext
   - Python package/module structure vs .NET namespaces
+  - thefuzz fuzzy matching vs string comparison in C#
+  - HTTP scraping patterns vs HttpClient in C#
 - Docker Desktop running on Windows host
-- Target DFW region restaurants as initial dataset for validation and backtesting
+- 25 DFW restaurants onboarded and scoring
 
 ---
 
@@ -337,88 +417,74 @@ Note: Health inspection and TABC scrapers require no API keys — both use free 
 
 **Phase 1 — COMPLETE**
 - Scaffolding, docker-compose, Google Places scraper end-to-end
-- Raw signals confirmed landing in raw_signals table
 
 **Phase 2 — COMPLETE**
-- Foursquare scraper (replaced Yelp — cost prohibitive at $229/mo)
-- Scoring engine computing review_velocity_score, rating_trend_score, overall_score
-- Scores confirmed landing in health_scores table
+- Foursquare scraper (replaced Yelp — cost prohibitive)
+- Scoring engine: review_velocity_score, rating_trend_score, overall_score
 
 **Phase 3 — COMPLETE**
-- Health inspection scraper (Dallas OpenData + Fort Worth MyHealthDepartment)
-- TABC liquor license monitor (Texas Open Data Portal — no API key required)
-- Google hours change detector (uses existing Google Places snapshots)
-- operational_score added to scoring engine
-- Score caps: TABC suspension caps at 40, critical inspection caps at 50
+- Health inspection scraper (Dallas + Fort Worth)
+- TABC liquor license monitor
+- Google hours change detector
+- operational_score added, score caps added
 
 **Phase 3b — COMPLETE**
 - Trend analysis added to scoring engine
 - health_scores extended with trend fields
-- EF Core migration created
 - license_history_risk caps overall_score at 65
-- API response updated with all trend fields
 
 **Phase 4 — COMPLETE**
-- APScheduler wired with all 6 jobs running automatically
-- Scheduler runs as container entry point with restart: unless-stopped
-- Error handling added across all scrapers
-- Test cycle confirmed: Pecan Lodge overall_score=93
+- APScheduler wired with all jobs running automatically
+- Scheduler runs as container entry point
 
 **Phase 5 — COMPLETE**
-- Bulk CSV onboarding pipeline
-- Auto-lookup of Google Place ID and Foursquare ID per restaurant
-- Dynamic scheduler picks up new restaurants every 10 minutes
-- Idempotent onboarding confirmed (35/35 steps green)
-- 5 DFW restaurants onboarded: Pecan Lodge 93, The Rustic 93, Torchy's Tacos 96, Uchi Dallas 97
-- New endpoints: POST /onboard, GET /restaurants, GET /restaurants/{id}
+- Bulk CSV onboarding pipeline, idempotent (35/35 green)
+- 5 DFW restaurants onboarded initially
+- Dynamic scheduler, new API endpoints
 
 **Phase 6 — COMPLETE**
-- Single page HTML demo at /demo/index.html
-- Three level score display: summary, signal breakdown, raw evidence
-- Score factors emitted by scoring engine and stored as JSONB
-- Restaurant search by name + address + city with disambiguation
-- Recently scored list and side-by-side comparison with difference highlighting
-- New endpoint: POST /api/v1/restaurants/search-and-score with 24hr caching
+- Demo UI at http://localhost:3000 (nginx container)
+- Three level score display with score factors drill-down
+- search-and-score endpoint with 24hr caching
+- Disambiguation fixed: name+address resolves to single match
 
 **Phase 6b — COMPLETE**
-- Seasonality adjustment module using DFW industry seasonal factors
-- Year-over-year comparison when 12 months of history available
-- Period comparison with seasonal normalization as fallback
-- New score factors: monthly volume trend, recency gap, owner response rate,
-  1-star spike, 90-day rating slope, recent vs lifetime gap,
-  cross-source divergence, review count confidence
-- Warning badges in demo UI for triggered flags
-- Monthly review sparkline in demo UI
+- Seasonality adjustment module
+- Enhanced score factors: monthly volume trend, recency gap, owner response rate,
+  1-star spike, 90-day slope, recent vs lifetime gap, cross-source divergence
 
 **Phase 6c — COMPLETE**
-- Confidence gate added: minimum 10 data points required before applying trend penalties
-- monthly_volume_trend shows insufficient_data instead of false sharply_declining signals
-- Same gate applied to ninety_day_slope, recent_vs_lifetime_gap, owner_response_rate
-- volume_trend_confidence column added to health_scores
-- Demo UI shows gray neutral indicator for insufficient_data with explanatory tooltip
-- No healthy restaurant shows red warning badges due to insufficient data
+- Confidence gate: minimum 10 data points before applying trend penalties
+- Gray neutral indicator in demo UI for insufficient_data
 
 **Phase 7 — COMPLETE**
-- Outscraper Google Maps Reviews integration: fetches up to 12 months of review history per restaurant
-- monthly_breakdown stored in raw_signals (source=outscraper_reviews) with count + avg_rating per month
-- Scoring engine prefers Outscraper data for year_over_year comparison; falls back to period_comparison
-- comparison_method = year_over_year when Outscraper data available; monthly_volume_trend shows real trend
-- Health inspection coverage expanded to all 10 DFW cities with per-city authority routing:
-  Dallas (City of Dallas), Fort Worth/Arlington/Grand Prairie (Tarrant County MHD),
-  Plano/Frisco/McKinney (Collin County MHD), Irving/Garland (Dallas County), Denton (Denton County)
-- TABC scraper confirmed state-wide: covers all DFW cities, city_matched logged per record
-- Outscraper job added to scheduler: weekly Sunday 1:00 AM UTC (CronTrigger, before 5 AM scoring)
+- Outscraper integrated for deep review history
+- Health inspection routing for all 10 DFW cities
+- TABC confirmed for all DFW cities
+- 25 restaurants onboarded and scoring
+- Google Places v1 migration
+- days_since_last_review: Outscraper primary, Google Places fallback
 
-**Phase 7b — COMPLETE**
-- Google Places scraper migrated from legacy API to Places API v1
-- Endpoint: places.googleapis.com/v1/places/{place_id} with X-Goog-Api-Key header and X-Goog-FieldMask
-- Response normalized to legacy schema (user_ratings_total, opening_hours, etc.) — scoring engine and hours monitor unchanged
-- publishTime (ISO 8601) replaces legacy time (Unix int); _review_dt() handles both for backward compatibility
-- api_version=v1 stored in all new raw_signals payloads
-- test_google_places_v2.py updated to run live scrape and verify publishTime parsing
+**Phase 8 — COMPLETE**
+- SBA loan history scraper (Data.gov, free, fuzzy matching)
+- Business personal property tax scraper (county CADs, fuzzy matching)
+- financial_risk_score component added (0-100)
+- Score caps: sba_default caps at 45, tax_delinquent 2yr caps at 55
+- overall_score weights: velocity 20%, rating 30%, operational 30%, financial 20%
+- 25/25 restaurants passed
+- Pecan Lodge: overall=88, financial_risk=100, operational=95
 
-**Phase 8 — Next (choose one)**
-Option A: API hardening — authentication, rate limiting, ready for first paying customer
-Option B: Customer validation — demo to Sysco/distributor contact, gather feedback
-Option C: Job postings signal — integrate Indeed or LinkedIn for staffing stress indicator
-Option D: Website uptime monitor — direct HTTP check as low-weight operational signal
+**Phase 9 — COMPLETE**
+- DoorDash and Uber Eats listing status checker built
+- Change detection logic for delivery_platform_loss flag
+- delivery_platform_loss warning badge in demo UI
+- 25/25 passed — platform_unavailable from Docker (bot detection blocks headless requests)
+- Infrastructure and DB columns in place — ready when data source resolved
+- Known fix options: SerpApi Google Shopping, Playwright browser automation
+
+**Phase 10 — Options (choose one or more)**
+A: API hardening — authentication, rate limiting, ready for first paying customer
+B: Delivery platform fix — SerpApi or Playwright to bypass bot detection
+C: Outscraper paid tier upgrade — same-week review freshness
+D: Customer validation — demo to Sysco/distributor contact, gather feedback
+E: VPS deployment — Railway or DigitalOcean for always-on production hosting
