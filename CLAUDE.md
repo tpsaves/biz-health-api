@@ -228,8 +228,16 @@ insufficient_data never triggers a red warning badge in the demo UI.
 | Job postings | Medium | Placeholder — not yet built | TBD |
 | Website uptime | Low | Direct HTTP check | No |
 
-### Google Places API Limitation
-Returns maximum 5 most recent reviews per request. This means:
+### Google Places API
+- **Endpoint**: Places API v1 (`https://places.googleapis.com/v1/places/{place_id}`)
+- Auth: `X-Goog-Api-Key` header (not query param `key=`)
+- Fields: `X-Goog-FieldMask` header — `id,displayName,rating,userRatingCount,currentOpeningHours,regularOpeningHours,reviews`
+- Returns maximum 5 reviews per request in Google's default (relevance) order
+- `reviews[].publishTime` is ISO 8601 with nanosecond precision (e.g. `2026-02-25T18:47:51.391323873Z`)
+- `_review_dt()` in `google_places.py` handles both `publishTime` (v1) and `time` (Unix int, legacy) for backward compatibility with existing raw_signals
+- `_extract_velocity_metrics()` sorts reviews by `_review_dt()` internally — `days_since_last_review` is accurate regardless of API return order
+- `api_version: "v1"` stored in every raw_signals payload going forward
+- Note: `reviews.rankPreference=NEWEST` is NOT supported on Place Details — only on Text/Nearby Search POST body. Attempting it returns HTTP 400.
 - True monthly volume history cannot be reconstructed from API alone
 - Outscraper (Phase 7) solves this: fetches up to 520 reviews with timestamps for real monthly breakdowns
 - Year-over-year comparison uses Outscraper data when available; falls back to period comparison with DFW seasonal normalization
@@ -400,6 +408,14 @@ Note: Health inspection and TABC scrapers require no API keys — both use free 
   Plano/Frisco/McKinney (Collin County MHD), Irving/Garland (Dallas County), Denton (Denton County)
 - TABC scraper confirmed state-wide: covers all DFW cities, city_matched logged per record
 - Outscraper job added to scheduler: weekly Sunday 1:00 AM UTC (CronTrigger, before 5 AM scoring)
+
+**Phase 7b — COMPLETE**
+- Google Places scraper migrated from legacy API to Places API v1
+- Endpoint: places.googleapis.com/v1/places/{place_id} with X-Goog-Api-Key header and X-Goog-FieldMask
+- Response normalized to legacy schema (user_ratings_total, opening_hours, etc.) — scoring engine and hours monitor unchanged
+- publishTime (ISO 8601) replaces legacy time (Unix int); _review_dt() handles both for backward compatibility
+- api_version=v1 stored in all new raw_signals payloads
+- test_google_places_v2.py updated to run live scrape and verify publishTime parsing
 
 **Phase 8 — Next (choose one)**
 Option A: API hardening — authentication, rate limiting, ready for first paying customer
