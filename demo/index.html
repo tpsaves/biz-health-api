@@ -702,12 +702,12 @@
     const months = [];
     for (let i = 5; i >= 0; i--) months.push(_monthKey(i));
 
-    // Determine the start of the collection window as a YYYY-MM string.
-    // Fall back to the earliest key in the counts object if the API doesn't provide it.
+    // Use the earliest month key in counts as the data boundary.
+    // dataCollectionStart is the scraper job's first run date, not the start
+    // of review history — Outscraper fetches retroactively, so the earliest
+    // key in monthlyReviewCounts is the correct "data begins here" marker.
     const sortedKeys   = Object.keys(counts).sort();
-    const startFromApi = dataCollectionStart
-      ? dataCollectionStart.slice(0, 7)   // "2025-03T..." → "2025-03"
-      : (sortedKeys.length ? sortedKeys[0] : null);
+    const startFromApi = sortedKeys.length ? sortedKeys[0] : null;
 
     const maxVal = Math.max(...Object.values(counts).filter(v => v > 0), 1);
 
