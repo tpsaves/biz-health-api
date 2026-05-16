@@ -116,6 +116,22 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     if outscraper_row:
         outscraper_monthly = outscraper_row.payload.get("monthly_breakdown", {})
 
+    # Refine days_since_last using Outscraper's most recent month with reviews.
+    # Google Places only sees the 5 most recent reviews, so its days_since_last
+    # is stale when Outscraper has more recent monthly data.
+    # Use the first day of the most recent non-zero month as a conservative bound.
+    if outscraper_monthly:
+        months_with_reviews = [
+            k for k, v in outscraper_monthly.items()
+            if isinstance(v, dict) and v.get("count", 0) > 0
+        ]
+        if months_with_reviews:
+            yr, mo   = map(int, max(months_with_reviews).split("-"))
+            month_start = datetime(yr, mo, 1, tzinfo=timezone.utc)
+            or_days  = (datetime.now(timezone.utc) - month_start).days
+            if days_since_last is None or or_days < days_since_last:
+                days_since_last = or_days
+
     if outscraper_monthly:
         # Convert {"YYYY-MM": {"count": N, ...}} → {(year, month): count}
         # Same tuple-keyed format that seasonality.year_over_year() expects.
