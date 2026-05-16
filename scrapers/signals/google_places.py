@@ -14,6 +14,33 @@ _DETAIL_URL = "https://maps.googleapis.com/maps/api/place/details/json"
 _FIELDS = "name,rating,user_ratings_total,reviews,opening_hours"
 
 
+def _review_dt(review: dict) -> datetime | None:
+    """Parse a review timestamp from either API format.
+
+    The legacy Places API returns "time" as a Unix integer (seconds since
+    epoch).  The newer Places API v1 returns "publishTime" as an RFC 3339
+    string.  We prefer publishTime when present so the scraper works with
+    both API versions without changes to the caller.
+
+    C# equivalents:
+      publishTime → DateTime.Parse(s, null, DateTimeStyles.RoundtripKind)
+      time        → DateTimeOffset.FromUnixTimeSeconds(ts).UtcDateTime
+    Python notes:
+      datetime.fromisoformat() handles "Z" suffix only in Python 3.11+;
+      replace("Z", "+00:00") makes it safe on 3.9/3.10 too.
+      datetime.fromtimestamp(ts, tz=...) is always UTC when tz=timezone.utc —
+      unlike C# DateTime.FromFileTimeUtc which uses a different epoch (1601).
+    """
+    if pt := review.get("publishTime"):
+        # ISO 8601 / RFC 3339 string, e.g. "2026-03-15T10:30:00Z"
+        return datetime.fromisoformat(pt.replace("Z", "+00:00"))
+    ts = review.get("time")
+    if ts:
+        # Unix seconds since 1970-01-01 UTC → timezone-aware datetime.
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    return None
+
+
 def _extract_velocity_metrics(result: dict) -> dict:
     """Derive velocity metrics from the reviews list in a Places API result.
 
@@ -25,24 +52,27 @@ def _extract_velocity_metrics(result: dict) -> dict:
     now_utc = datetime.now(timezone.utc)
     reviews  = result.get("reviews") or []
 
-    # Sort ascending by time so oldest first.
-    reviews_sorted = sorted(reviews, key=lambda r: r.get("time", 0))
+    # Sort ascending so index -1 is the newest.
+    # C# equivalent: reviews.OrderBy(r => r.Time)
+    reviews_sorted = sorted(reviews, key=lambda r: _review_dt(r) or datetime.min.replace(tzinfo=timezone.utc))
 
     days_since_last_review: int | None = None
     if reviews_sorted:
-        latest_ts = reviews_sorted[-1].get("time", 0)
-        latest_dt = datetime.fromtimestamp(latest_ts, tz=timezone.utc)
-        days_since_last_review = (now_utc - latest_dt).days
+        latest_dt = _review_dt(reviews_sorted[-1])
+        if latest_dt:
+            # timedelta.days truncates to whole days — same as (int)(span.TotalDays) in C#.
+            days_since_last_review = (now_utc - latest_dt).days
 
     # Compute per-window averages and 1-star rates.
+    # _review_dt() handles both "time" and "publishTime" fields transparently.
     def _window(days: int) -> list[dict]:
         cutoff = now_utc.timestamp() - days * 86400
-        return [r for r in reviews if r.get("time", 0) >= cutoff]
+        return [r for r in reviews if (_review_dt(r) or datetime.min.replace(tzinfo=timezone.utc)).timestamp() >= cutoff]
 
     last_60  = _window(60)
     prior_60 = [r for r in reviews
-                if r.get("time", 0) < now_utc.timestamp() - 60  * 86400
-                and r.get("time", 0) >= now_utc.timestamp() - 120 * 86400]
+                if (_review_dt(r) or datetime.min.replace(tzinfo=timezone.utc)).timestamp() < now_utc.timestamp() - 60  * 86400
+                and (_review_dt(r) or datetime.min.replace(tzinfo=timezone.utc)).timestamp() >= now_utc.timestamp() - 120 * 86400]
 
     def _avg_rating(rs: list[dict]) -> float | None:
         ratings = [r.get("rating") for r in rs if r.get("rating") is not None]
@@ -67,13 +97,12 @@ def _extract_velocity_metrics(result: dict) -> dict:
     owner_response_rate = round(responses_90d / total_90d * 100) if total_90d else 0
 
     # Monthly review buckets from timestamps — keyed as "YYYY-MM".
+    # Works for both "time" (Unix int) and "publishTime" (ISO string) via _review_dt().
     monthly_from_reviews: dict[str, int] = defaultdict(int)
     for r in reviews:
-        ts = r.get("time", 0)
-        if ts:
-            dt  = datetime.fromtimestamp(ts, tz=timezone.utc)
-            key = f"{dt.year}-{dt.month:02d}"
-            monthly_from_reviews[key] += 1
+        dt = _review_dt(r)
+        if dt:
+            monthly_from_reviews[f"{dt.year}-{dt.month:02d}"] += 1
 
     return {
         "days_since_last_review":  days_since_last_review,
