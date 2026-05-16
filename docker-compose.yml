@@ -58,5 +58,15 @@ services:
       retries: 3
       start_period: 15s
 
+  demo:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    volumes:
+      - ./demo:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
