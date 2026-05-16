@@ -370,9 +370,11 @@
     .sparkline-label   { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 6px; }
     .sparkline-bars    { display: flex; align-items: flex-end; gap: 4px; height: 36px; }
     .sparkline-bar     { flex: 1; background: #3b82f6; border-radius: 2px 2px 0 0; opacity: .75; min-height: 2px; }
+    .sparkline-bar-zero { background: transparent !important; opacity: 1 !important; border: 1.5px solid #cbd5e1; border-radius: 2px 2px 0 0; }
     .sparkline-footer  { font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic; }
+    .sparkline-legend  { font-size: 10px; color: var(--muted); margin-top: 2px; }
     .sparkline-months  { display: flex; gap: 4px; }
-    .sparkline-month   { flex: 1; text-align: center; font-size: 10px; color: var(--muted); overflow: hidden; }
+    .sparkline-month   { flex: 1; text-align: center; font-size: 10px; color: var(--muted); overflow: hidden; cursor: default; }
 
     /* ── Velocity / rating supplemental info ────────────────────────────── */
     .suppl-panel  { margin-top: 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; font-size: 12px; }
@@ -679,37 +681,82 @@
   }
 
   // ── Phase 6b: Sparkline bar chart ─────────────────────────────────────────
-  function renderSparkline(monthlyReviewCounts, seasonalityAdjusted, comparisonMethod) {
-    if (!monthlyReviewCounts) return '';
-    const keys = Object.keys(monthlyReviewCounts).sort();
-    if (!keys.length) return '';
-    const last = Math.min(12, keys.length);
-    const slice = keys.slice(-last);
-    const vals  = slice.map(k => monthlyReviewCounts[k]);
-    const max   = Math.max(...vals, 1);
-    const bars  = slice.map((k, i) => {
-      const h = Math.max(4, Math.round(vals[i] / max * 36));
-      return `<div class="sparkline-bar" style="height:${h}px" title="${k}: ${vals[i]} reviews"></div>`;
+  const MONTH_LABELS = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const _MONTH_FULL   = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  // Build a "YYYY-MM" key for a date that is `offsetMonths` before today.
+  function _monthKey(offsetMonths) {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - offsetMonths);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  }
+
+  // dataCollectionStart: ISO timestamp from earliest outscraper_reviews scraped_at.
+  // Months before that date are "no data" — render an empty slot with a dimmed label.
+  // Months on/after that date with count=0 are "zero reviews" — gray outline bar.
+  function renderSparkline(monthlyReviewCounts, seasonalityAdjusted, comparisonMethod, dataCollectionStart) {
+    const counts = monthlyReviewCounts || {};
+
+    // Generate the fixed 12-month window ending at the current month.
+    const months = [];
+    for (let i = 5; i >= 0; i--) months.push(_monthKey(i));
+
+    // Determine the start of the collection window as a YYYY-MM string.
+    // Fall back to the earliest key in the counts object if the API doesn't provide it.
+    const sortedKeys   = Object.keys(counts).sort();
+    const startFromApi = dataCollectionStart
+      ? dataCollectionStart.slice(0, 7)   // "2025-03T..." → "2025-03"
+      : (sortedKeys.length ? sortedKeys[0] : null);
+
+    const maxVal = Math.max(...Object.values(counts).filter(v => v > 0), 1);
+
+    const bars = months.map(k => {
+      const [yr, mo] = k.split('-');
+      const fullName = `${_MONTH_FULL[+mo]} ${yr}`;
+
+      // Before data collection: invisible placeholder keeps flex alignment.
+      if (!startFromApi || k < startFromApi) {
+        return `<div class="sparkline-bar" style="height:0;background:transparent" aria-hidden="true"></div>`;
+      }
+
+      const count = counts[k] ?? 0;
+      if (count === 0) {
+        return `<div class="sparkline-bar sparkline-bar-zero" style="height:8px" title="${fullName}: no reviews"></div>`;
+      }
+      const h = Math.max(4, Math.round(count / maxVal * 36));
+      return `<div class="sparkline-bar" style="height:${h}px" title="${fullName}: ${count} review${count === 1 ? '' : 's'}"></div>`;
     }).join('');
-    const monthLabels = slice.map(k => {
-      const [, m] = k.split('-');
-      return `<span class="sparkline-month">${['','J','F','M','A','M','J','J','A','S','O','N','D'][+m]}</span>`;
+
+    const monthLabels = months.map(k => {
+      const [yr, mo] = k.split('-');
+      const letter   = MONTH_LABELS[+mo];
+      const fullName = `${_MONTH_FULL[+mo]} ${yr}`;
+      const beforeCollection = !startFromApi || k < startFromApi;
+      const count = counts[k] ?? 0;
+      const color = beforeCollection ? 'color:#c8d4e3'    // very light — before scraping started
+                  : count === 0      ? 'color:#94a3b8'    // slightly dimmed — zero reviews
+                  : '';
+      return `<span class="sparkline-month" title="${fullName}"${color ? ` style="${color}"` : ''}>${letter}</span>`;
     }).join('');
+
     const methodLabel = comparisonMethod === 'year_over_year' ? 'Year-over-year' :
                         comparisonMethod === 'period_comparison' ? 'Period comparison' : '';
     const adjNote = seasonalityAdjusted
       ? 'Volumes adjusted for DFW seasonal patterns'
       : (methodLabel ? `Basis: ${methodLabel}` : '');
+
     return `<div class="sparkline-wrap">
-      <div class="sparkline-label">Monthly review trend (${last} months)</div>
+      <div class="sparkline-label">Monthly review trend — last 6 months</div>
       <div class="sparkline-bars">${bars}</div>
       <div class="sparkline-months">${monthLabels}</div>
+      <div class="sparkline-legend">&#9645; Gray outline = zero reviews this month</div>
       ${adjNote ? `<div class="sparkline-footer">${adjNote}${methodLabel && seasonalityAdjusted ? ' · ' + methodLabel : ''}</div>` : ''}
     </div>`;
   }
 
   // ── Phase 6b: Velocity supplemental panel ────────────────────────────────
-  function renderVelocitySupplemental(s, monthlyReviewCounts) {
+  function renderVelocitySupplemental(s, monthlyReviewCounts, dataCollectionStart) {
     const rows = [];
 
     if (s.daysSinceLastReview != null) {
@@ -728,7 +775,7 @@
       rows.push(`<div class="suppl-row"><span class="suppl-key">Comparison basis</span><span class="suppl-val">${label}</span></div>`);
     }
 
-    const sparkline = renderSparkline(monthlyReviewCounts, s.seasonalityAdjusted, s.comparisonMethod);
+    const sparkline = renderSparkline(monthlyReviewCounts, s.seasonalityAdjusted, s.comparisonMethod, dataCollectionStart);
     if (!rows.length && !sparkline) return '';
     return `<div class="suppl-panel">${sparkline}${rows.join('')}</div>`;
   }
@@ -841,7 +888,7 @@
       d.tabcLicenseType ? `${d.tabcLicenseType} license` : null,
     ].filter(Boolean).join(' · ');
 
-    const rvSuppl  = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
+    const rvSuppl  = renderVelocitySupplemental(s, ev.monthlyReviewCounts, ev.dataCollectionStart);
     const rtSuppl  = renderRatingSupplemental(s);
     const finSuppl = renderFinancialSupplemental(s);
     const rvBlock  = componentBlock(data.id, 'rv',  'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSuppl,  renderGoogleEvidence(ev));
@@ -923,7 +970,7 @@
       return `<span class="compare-diff-badge ${better ? 'compare-diff-better' : 'compare-diff-worse'}">${better ? '+' : '-'}${diffs[key].gap}</span>`;
     }
 
-    const rvSupplC  = renderVelocitySupplemental(s, ev.monthlyReviewCounts);
+    const rvSupplC  = renderVelocitySupplemental(s, ev.monthlyReviewCounts, ev.dataCollectionStart);
     const rtSupplC  = renderRatingSupplemental(s);
     const finSupplC = renderFinancialSupplemental(s);
     const rvBlock  = componentBlock(data.id, `cmp${index}rv`,  'Review Velocity',    s.reviewVelocityScore, sf.reviewVelocity, rvSupplC,  renderGoogleEvidence(ev));

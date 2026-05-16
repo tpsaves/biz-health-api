@@ -253,6 +253,14 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
     var hmInfo  = await db.RawSignals.Where(s => s.RestaurantId == restaurant.Id && s.Source == "hours_monitor")
                     .OrderByDescending(s => s.ScrapedAt).Select(s => new { s.Payload, s.ScrapedAt }).FirstOrDefaultAsync();
 
+    // Earliest outscraper_reviews scraped_at — used by the UI to distinguish
+    // "zero reviews this month" from "before data collection started".
+    var dataCollectionStart = await db.RawSignals
+                    .Where(s => s.RestaurantId == restaurant.Id && s.Source == "outscraper_reviews")
+                    .OrderBy(s => s.ScrapedAt)
+                    .Select(s => (DateTime?)s.ScrapedAt)
+                    .FirstOrDefaultAsync();
+
     // ── Level 1 details (summary values shown without expansion) ──────────────
     double? googleRating  = null;
     int?    googleReviews = null;
@@ -439,6 +447,7 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
                 scrapedAt = hmInfo.ScrapedAt,
             },
             monthlyReviewCounts,
+            dataCollectionStart,
         },
     });
 });
