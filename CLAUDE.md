@@ -14,7 +14,7 @@ who need to assess the risk of small restaurant businesses before extending cred
 | `api` | .NET 9 Web API + EF Core | Serves health scores and restaurant data via REST |
 | `scrapers` | Python 3.11 + SQLAlchemy + APScheduler | Collects and stores raw signals on a schedule |
 | `db` | PostgreSQL 17 | Shared data store |
-| `demo` | Single page HTML/CSS/JS | Customer-facing demo UI |
+| `demo` | nginx:alpine | Serves the single-page demo UI at http://localhost:3000 |
 
 ### Project Structure
 ```
@@ -54,7 +54,8 @@ who need to assess the risk of small restaurant businesses before extending cred
 - Postgres hostname inside Docker network is `db`
 - Postgres exposed to Windows host at `localhost:5432` for GUI tools
 - API runs on port 8080
-- Scrapers container restarts automatically (restart: unless-stopped)
+- Demo UI served by nginx on port 3000 — no separate Python server needed
+- All containers use restart: unless-stopped
 
 ---
 
@@ -266,7 +267,8 @@ Defined in /scrapers/scoring/seasonality.py using DFW industry seasonal factors:
 ## Demo UI (/demo/index.html)
 
 - Single self-contained HTML/CSS/JS file, no build tools
-- Calls .NET API at http://localhost:8080
+- Served by nginx:alpine at http://localhost:3000 (docker-compose demo service)
+- Calls .NET API at http://localhost:8080 — resolved by the browser on the host, not from inside the container
 - Search: Restaurant Name (required), Address or Zip (required), City (optional dropdown)
 - Supported cities: Dallas, Fort Worth, Arlington, Plano, Frisco, McKinney, Denton, Irving, Garland, Grand Prairie
 - Health inspection coverage: all 10 DFW cities (routing per city to correct health authority)
