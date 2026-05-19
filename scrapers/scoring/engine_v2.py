@@ -94,6 +94,9 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
 
     # ── review_velocity_score ──────────────────────────────────────────────────
     review_velocity_score = min(100, int(google_review_count / _MAX_REVIEW_COUNT * 100))
+    if review_velocity_score == 0 and outscraper_row:
+        outscraper_total = outscraper_row.payload.get("total_reviews_fetched", 0)
+        review_velocity_score = min(100, int(outscraper_total / _MAX_REVIEW_COUNT * 100))
 
     # Phase 6b enhanced velocity flags and adjustments
     review_gap_alert   = False
@@ -276,10 +279,13 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
 
     # Review count confidence multiplier.
     review_count_confidence: str
-    if google_review_count >= 200:
+    _confidence_review_count = google_review_count or (
+        outscraper_row.payload.get("total_reviews_fetched", 0) if outscraper_row else 0
+    )
+    if _confidence_review_count >= 200:
         review_count_confidence = "high"
         confidence_multiplier   = 1.0
-    elif google_review_count >= 50:
+    elif _confidence_review_count >= 50:
         review_count_confidence = "medium"
         confidence_multiplier   = 0.85
     else:
@@ -448,6 +454,14 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     if tax_delinquent and tax_delinquency_years >= 2:
         overall_score = min(overall_score, 55)
 
+    # Composite cap (Phase 10): prevents strong rating_trend from masking
+    # simultaneous operational + velocity weakness. Derived from backtesting
+    # false negative analysis — 4 restaurants scored moderate but closed within 180 days.
+    composite_risk_cap = False
+    if operational_score < 65 and review_velocity_score < 30:
+        overall_score = min(overall_score, 59)
+        composite_risk_cap = True
+
     # ── score_factors ──────────────────────────────────────────────────────────
     review_velocity_factors: list[dict] = []
 
@@ -458,6 +472,16 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "value": f"{google_review_count:,} reviews",
             "date": google_scraped_date or "",
             "impact": "positive" if google_review_count >= 1000 else ("neutral" if google_review_count >= 300 else "negative"),
+            "weight": "high",
+        })
+    elif outscraper_row and outscraper_row.payload.get("total_reviews_fetched", 0) > 0:
+        _os_total = outscraper_row.payload.get("total_reviews_fetched", 0)
+        review_velocity_factors.append({
+            "signal": "google_review_count",
+            "label": "Google review volume",
+            "value": f"{_os_total:,}+ reviews (via Outscraper)",
+            "date": "",
+            "impact": "positive" if _os_total >= 1000 else ("neutral" if _os_total >= 300 else "negative"),
             "weight": "high",
         })
     else:
@@ -585,7 +609,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     rating_trend_factors.append({
         "signal": "review_count_confidence",
         "label": "Rating confidence",
-        "value": f"{review_count_confidence.title()} ({google_review_count:,} reviews)",
+        "value": f"{review_count_confidence.title()} ({_confidence_review_count:,} reviews)",
         "date": google_scraped_date or "",
         "impact": "positive" if review_count_confidence == "high" else ("neutral" if review_count_confidence == "medium" else "negative"),
         "weight": "low",
@@ -795,6 +819,16 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             _platform_factor("Uber Eats", ue, delivery_row.payload.get("delisted_ubereats", False))
         )
 
+    if composite_risk_cap:
+        operational_factors.append({
+            "signal": "scoring_engine",
+            "label":  "Composite risk cap applied",
+            "value":  "Operational score < 65 and review velocity < 30 — elevated risk floor applied",
+            "impact": "negative",
+            "weight": "high",
+            "flag":   "composite_risk_cap",
+        })
+
     score_factors = {
         "reviewVelocity": review_velocity_factors,
         "ratingTrend":    rating_trend_factors,
@@ -804,8 +838,17 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
 
     # ── Monthly review counts for sparkline (last 12 months) ──────────────────
     # Stored in score_factors so the API can pass them to the demo UI.
-    if monthly_from_rev:
-        # Sort by key desc and take 12 most recent months.
+    # Outscraper fetches up to 520 real reviews with accurate timestamps and is
+    # the authoritative source for monthly counts. Google Places monthly_from_rev
+    # is built from daily 5-review snapshots and produces sparse, inaccurate counts.
+    if outscraper_monthly:
+        sorted_keys = sorted(outscraper_monthly.keys())[-12:]
+        score_factors["monthlyReviewCounts"] = {
+            k: outscraper_monthly[k]["count"]
+            for k in sorted_keys
+            if isinstance(outscraper_monthly.get(k), dict)
+        }
+    elif monthly_from_rev:
         sorted_months = sorted(monthly_from_rev.keys(), reverse=True)[:12]
         score_factors["monthlyReviewCounts"] = {m: monthly_from_rev[m] for m in sorted(sorted_months)}
 
@@ -830,7 +873,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 sba_latest_amount,     tax_delinquency_years,
                 doordash_listed,       ubereats_listed,
                 delivery_platform_count, delivery_status,
-                delivery_platform_loss
+                delivery_platform_loss, composite_risk_cap
             ) VALUES (
                 :restaurant_id,
                 :review_velocity_score, :rating_trend_score,
@@ -848,7 +891,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 :sba_latest_amount,     :tax_delinquency_years,
                 :doordash_listed,       :ubereats_listed,
                 :delivery_platform_count, :delivery_status,
-                :delivery_platform_loss
+                :delivery_platform_loss, :composite_risk_cap
             )
             """
         ),
@@ -883,6 +926,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "delivery_platform_count":   delivery_platform_count,
             "delivery_status":           delivery_status,
             "delivery_platform_loss":    delivery_platform_loss,
+            "composite_risk_cap":        composite_risk_cap,
         },
     )
     session.commit()
@@ -926,6 +970,8 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         "delivery_platform_count":  delivery_platform_count,
         "delivery_status":          delivery_status,
         "delivery_platform_loss":   delivery_platform_loss,
+        # Phase 10: composite risk cap
+        "composite_risk_cap":       composite_risk_cap,
     }
     logger.info(
         "v2 scored restaurant_id=%s overall=%s financial=%s sba_default=%s "

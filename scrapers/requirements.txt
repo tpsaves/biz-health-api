@@ -4,3 +4,4 @@ httpx==0.28.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 thefuzz==0.22.1
+scikit-learn==1.6.1

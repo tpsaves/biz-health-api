@@ -22,12 +22,14 @@ from signals.google_places import scrape_place
 from signals.foursquare import scrape_venue
 from signals.health_inspections import scrape_inspections
 from signals.outscraper_reviews import scrape_outscraper_reviews
+from signals.outscraper_quota import monthly_summary as outscraper_quota_summary
 from signals.tabc_license import scrape_license
 from signals.hours_monitor import scrape_hours
 from signals.sba_loans import scrape_sba_loans
 from signals.property_tax import scrape_property_tax
 from signals.delivery_platforms import scrape_delivery_platforms
 from scoring.engine_v2 import compute_scores_v2
+from backtesting.outcome_tracker import run_outcome_tracker
 
 # load_dotenv is a no-op inside Docker (env vars already injected by docker-compose).
 # It only activates when running locally with a .env file.
@@ -178,14 +180,24 @@ def run_delivery_platforms_scrape() -> None:
 def run_outscraper_scrape() -> None:
     """Fetch Outscraper review history for all tracked restaurants.
 
-    Runs weekly on Sunday at 1:00 AM UTC — before the daily scoring engine run
-    at 5:00 AM — so fresh monthly data feeds into Sunday scores.
-
-    Outscraper is pay-per-use, so weekly is sufficient to capture monthly review
-    volume trends without unnecessary API charges.
+    Runs biweekly (1st and 15th at 1:00 AM UTC) — 46 reviews/restaurant per run,
+    107 restaurants × 46 × 2 = 9,844 records/month (~$29.53).
     """
-    logger.info("[outscraper] job started")
+    logger.info(
+        "[outscraper] job started — biweekly schedule (1st and 15th), "
+        "46 reviews/restaurant, ~9,844 records/month"
+    )
     with Session(engine) as session:
+        summary = outscraper_quota_summary(session)
+        logger.info(
+            "[outscraper] quota: %d/%d records used (%s) — %d remaining",
+            summary["records_used"], summary["cap"],
+            summary["estimated_cost"], summary["records_remaining"],
+        )
+        if summary["records_remaining"] == 0:
+            logger.warning("[outscraper] monthly quota exhausted — skipping entire batch")
+            return
+
         for r in _get_restaurants(session):
             rid = str(r.id)
             try:
@@ -234,6 +246,22 @@ def _score(name: str, rid: str, session: Session) -> None:
     logger.info("Scored %s — overall=%s", name, scores["overall_score"])
 
 
+def run_backtest_outcome_tracker() -> None:
+    """Check 90/180-day outcomes for prospective backtest cohort restaurants.
+
+    Runs weekly on Sunday at 3:00 AM UTC. Checks Google Places status, TABC,
+    review recency gaps, and hours changes to determine current operational status.
+    """
+    logger.info("[backtest_outcome] job started")
+    with Session(engine) as session:
+        try:
+            summary = run_outcome_tracker(session)
+            logger.info("[backtest_outcome] complete: %s", summary)
+        except Exception as exc:
+            logger.error("[backtest_outcome] FAILED: %s", exc)
+    logger.info("[backtest_outcome] job complete")
+
+
 # ── scheduler setup ────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -269,12 +297,12 @@ def main() -> None:
         coalesce=True,
         max_instances=1,
     )
-    # CronTrigger pins the outscraper job to Sunday 1 AM UTC so it always runs
-    # before the daily scoring job at 5 AM, feeding fresh monthly data into scores.
-    # IntervalTrigger would drift relative to start time; CronTrigger does not.
+    # Outscraper: biweekly on the 1st and 15th at 1:00 AM UTC.
+    # 46 reviews × 107 restaurants × 2 runs/month = 9,844 records/month (~$29.53).
+    # CronTrigger with day='1,15' fires on both dates; no drift vs IntervalTrigger.
     scheduler.add_job(
         run_outscraper_scrape,
-        CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
+        CronTrigger(day="1,15", hour=1, minute=0, timezone="UTC"),
         id="outscraper_scrape",
         coalesce=True,
         max_instances=1,
@@ -302,6 +330,16 @@ def main() -> None:
         run_delivery_platforms_scrape,
         CronTrigger(day_of_week="mon", hour=5, minute=0, timezone="UTC"),
         id="delivery_platforms_scrape",
+        coalesce=True,
+        max_instances=1,
+    )
+    # Backtesting outcome tracker: Sunday 3:00 AM UTC — checks prospective cohort
+    # restaurants for 90/180-day outcomes. Runs after Outscraper (1 AM) so fresh
+    # review data is available for review-gap checks.
+    scheduler.add_job(
+        run_backtest_outcome_tracker,
+        CronTrigger(day_of_week="sun", hour=3, minute=0, timezone="UTC"),
+        id="backtest_outcome_tracker",
         coalesce=True,
         max_instances=1,
     )

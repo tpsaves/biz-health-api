@@ -365,6 +365,7 @@
     .warn-badge-source      { background: #fffbeb; color: #b45309; border-color: #fde68a; }
     .warn-badge-financial   { background: #fef2f2; color: #7f1d1d; border-color: #fca5a5; }
     .warn-badge-operational { background: #fdf4ff; color: #7e22ce; border-color: #d8b4fe; }
+    .warn-badge-composite   { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
     /* ── Delivery platform badges (Phase 9) ─────────────────────────────── */
     .delivery-badges { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px; }
     .delivery-badge {
@@ -379,13 +380,13 @@
     /* ── Sparkline (Phase 6b) ────────────────────────────────────────────── */
     .sparkline-wrap    { margin: 8px 0 4px; }
     .sparkline-label   { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin-bottom: 6px; }
-    .sparkline-bars    { display: flex; align-items: flex-end; gap: 4px; height: 36px; }
+    .sparkline-bars    { display: flex; align-items: flex-end; gap: 3px; height: 36px; }
     .sparkline-bar     { flex: 1; background: #3b82f6; border-radius: 2px 2px 0 0; opacity: .75; min-height: 2px; }
     .sparkline-bar-zero { background: transparent !important; opacity: 1 !important; border: 1.5px solid #cbd5e1; border-radius: 2px 2px 0 0; }
     .sparkline-footer  { font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic; }
     .sparkline-legend  { font-size: 10px; color: var(--muted); margin-top: 2px; }
-    .sparkline-months  { display: flex; gap: 4px; }
-    .sparkline-month   { flex: 1; text-align: center; font-size: 10px; color: var(--muted); overflow: hidden; cursor: default; }
+    .sparkline-months  { display: flex; gap: 3px; }
+    .sparkline-month   { flex: 1; text-align: center; font-size: 9px; color: var(--muted); overflow: hidden; cursor: default; }
 
     /* ── Velocity / rating supplemental info ────────────────────────────── */
     .suppl-panel  { margin-top: 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; font-size: 12px; }
@@ -413,7 +414,89 @@
     }
     .recent-name    { font-size: 14px; font-weight: 600; }
     .recent-address { font-size: 12px; color: var(--muted); }
-    .recent-date    { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .recent-date        { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .recent-row-active  { background: var(--bg); }
+    .recent-hint        { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+
+    /* ── Tab navigation ──────────────────────────────────────────────────── */
+    .tab-nav {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid var(--border);
+      background: var(--surface);
+      padding: 0 24px;
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+    .tab-btn {
+      padding: 14px 20px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      cursor: pointer;
+      color: var(--muted);
+      transition: color .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active {
+      color: var(--brand-mid);
+      border-bottom-color: var(--brand-mid);
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: contents; }
+
+    /* ── Backtesting tab ─────────────────────────────────────────────────── */
+    .bt-hero {
+      background: linear-gradient(135deg, var(--brand) 0%, var(--brand-mid) 100%);
+      color: #fff;
+      border-radius: 12px;
+      padding: 28px 32px;
+    }
+    .bt-hero-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    .bt-hero-lines { font-size: 14px; line-height: 1.9; opacity: 0.92; white-space: pre-line; }
+    .bt-metrics-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 14px;
+    }
+    .bt-metric {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      text-align: center;
+    }
+    .bt-metric-value { font-size: 28px; font-weight: 700; color: var(--brand-mid); }
+    .bt-metric-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .bt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .bt-table th {
+      text-align: left; padding: 9px 12px;
+      background: var(--bg); color: var(--muted);
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px;
+      border-bottom: 1px solid var(--border);
+    }
+    .bt-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+    .bt-table tr:last-child td { border-bottom: none; }
+    .bt-table tr:hover td { background: var(--bg); }
+    .bt-signal-bar-wrap { display: flex; align-items: center; gap: 8px; }
+    .bt-signal-bar { height: 6px; border-radius: 3px; background: var(--brand-mid); }
+    .bt-cohort-status {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 13px; color: var(--muted);
+    }
+    .bt-cohort-pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 99px;
+      font-size: 12px; font-weight: 600;
+      background: var(--brand-lt); color: var(--brand-mid);
+    }
+    .bt-loading { color: var(--muted); font-size: 13px; padding: 20px 0; }
+    .bt-error   { color: var(--red); font-size: 13px; padding: 20px 0; }
   </style>
 </head>
 <body>
@@ -430,7 +513,16 @@
   </div>
 </header>
 
+<!-- Tab navigation -->
+<div class="tab-nav">
+  <button class="tab-btn active" id="tab-btn-search"      onclick="switchTab('search')">Risk Score</button>
+  <button class="tab-btn"        id="tab-btn-backtesting" onclick="switchTab('backtesting')">Backtesting</button>
+</div>
+
 <main>
+
+<!-- ── Search Tab ─────────────────────────────────────────────────────────── -->
+<div class="tab-panel active" id="tab-search">
 
   <!-- Search -->
   <div class="card">
@@ -498,15 +590,121 @@
     <div id="recent-container"><div class="recent-empty">No restaurants scored yet in this session.</div></div>
   </div>
 
+</div><!-- end #tab-search -->
+
+<!-- ── Backtesting Tab ────────────────────────────────────────────────────── -->
+<div class="tab-panel" id="tab-backtesting">
+
+  <!-- Summary hero -->
+  <div class="bt-hero" id="bt-summary-hero">
+    <div class="bt-hero-title">Model Validation</div>
+    <div class="bt-hero-lines bt-loading">Loading backtesting results…</div>
+  </div>
+
+  <!-- Key metrics -->
+  <div class="card">
+    <div class="card-title">Model Performance</div>
+    <div class="bt-metrics-row" id="bt-metrics-row">
+      <div class="bt-metric"><div class="bt-metric-value bt-loading">—</div><div class="bt-metric-label">Restaurants Backtested</div></div>
+      <div class="bt-metric"><div class="bt-metric-value bt-loading">—</div><div class="bt-metric-label">Precision @ High Risk</div></div>
+      <div class="bt-metric"><div class="bt-metric-value bt-loading">—</div><div class="bt-metric-label">Recall @ High Risk</div></div>
+      <div class="bt-metric"><div class="bt-metric-value bt-loading">—</div><div class="bt-metric-label">AUC-ROC Score</div></div>
+    </div>
+  </div>
+
+  <!-- Risk band breakdown -->
+  <div class="card">
+    <div class="card-title">Closure Rate by Risk Band</div>
+    <table class="bt-table" id="bt-band-table">
+      <thead>
+        <tr>
+          <th>Risk Band</th>
+          <th>Count</th>
+          <th>Closed within 90 days</th>
+          <th>Closed within 180 days</th>
+          <th>Avg Score</th>
+        </tr>
+      </thead>
+      <tbody id="bt-band-body">
+        <tr><td colspan="5" class="bt-loading">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Signal importance -->
+  <div class="card">
+    <div class="card-title">Signal Importance (most predictive first)</div>
+    <table class="bt-table" id="bt-signal-table">
+      <thead>
+        <tr>
+          <th>Signal</th>
+          <th>Avg Score (Closed)</th>
+          <th>Avg Score (Open)</th>
+          <th>Predictive Delta</th>
+        </tr>
+      </thead>
+      <tbody id="bt-signal-body">
+        <tr><td colspan="4" class="bt-loading">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Prospective cohort status -->
+  <div class="card">
+    <div class="card-title">Prospective Cohort Tracking</div>
+    <div id="bt-cohort-status" class="bt-cohort-status bt-loading">Loading…</div>
+    <div style="margin-top: 16px;">
+      <table class="bt-table" id="bt-cohort-table">
+        <thead>
+          <tr>
+            <th>Restaurant</th>
+            <th>City</th>
+            <th>Baseline Score</th>
+            <th>Risk Band</th>
+            <th>90-Day Outcome</th>
+            <th>180-Day Outcome</th>
+          </tr>
+        </thead>
+        <tbody id="bt-cohort-body">
+          <tr><td colspan="6" class="bt-loading">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- end #tab-backtesting -->
+
 </main>
+
+<footer id="admin-footer" style="
+  margin: 32px auto 24px;
+  max-width: 900px;
+  padding: 14px 18px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--muted);
+">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <span style="font-weight:600;color:var(--text)">Admin</span>
+    <span id="quota-label" style="color:var(--muted)">Loading Outscraper quota…</span>
+    <div style="flex:1;min-width:160px;max-width:280px">
+      <div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden">
+        <div id="quota-bar" style="height:100%;width:0%;border-radius:4px;transition:width .4s;background:#22c55e"></div>
+      </div>
+    </div>
+  </div>
+</footer>
 
 <script>
   const API = 'http://localhost:8080';
 
   // ── State ───────────────────────────────────────────────────────────────
   const cache = {};   // id → full API response
-  let pinned  = [];   // max 2 restaurant ids
-  let recent  = [];
+  let pinned        = [];   // max 2 restaurant ids
+  let recent        = [];
+  let activeRecentId = null;
   try { recent = JSON.parse(localStorage.getItem('bh_recent') || '[]'); } catch {}
 
   // ── Risk helpers ─────────────────────────────────────────────────────────
@@ -689,6 +887,7 @@
                                  badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent ${s.taxDelinquencyYears}yr</span>`);
     else if (s.taxDelinquent)    badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent</span>`);
     if (s.deliveryPlatformLoss)  badges.push(`<span class="warn-badge warn-badge-operational">⚠ Platform Delisted</span>`);
+    if (s.compositeRiskCap)      badges.push(`<span class="warn-badge warn-badge-composite">⚠ Composite Risk Flag</span>`);
     return badges.length ? `<div class="warn-badges">${badges.join('')}</div>` : '';
   }
 
@@ -756,7 +955,7 @@
 
     // Generate the fixed 12-month window ending at the current month.
     const months = [];
-    for (let i = 5; i >= 0; i--) months.push(_monthKey(i));
+    for (let i = 11; i >= 0; i--) months.push(_monthKey(i));
 
     // Use the earliest month key in counts as the data boundary.
     // dataCollectionStart is the scraper job's first run date, not the start
@@ -799,15 +998,179 @@
     const methodLabel = comparisonMethod === 'year_over_year' ? 'Year-over-year' :
                         comparisonMethod === 'period_comparison' ? 'Period comparison' : '';
     const adjNote = seasonalityAdjusted
-      ? 'Volumes adjusted for DFW seasonal patterns'
+      ? 'Volumes adjusted for DFW seasonal patterns (12-month view)'
       : (methodLabel ? `Basis: ${methodLabel}` : '');
 
     return `<div class="sparkline-wrap">
-      <div class="sparkline-label">Monthly review trend — last 6 months</div>
+      <div class="sparkline-label">Monthly review trend — last 12 months</div>
       <div class="sparkline-bars">${bars}</div>
       <div class="sparkline-months">${monthLabels}</div>
       <div class="sparkline-legend">&#9645; Gray outline = zero reviews this month</div>
       ${adjNote ? `<div class="sparkline-footer">${adjNote}${methodLabel && seasonalityAdjusted ? ' · ' + methodLabel : ''}</div>` : ''}
+    </div>`;
+  }
+
+  // ── Phase 10: Dual-line year-over-year review trend chart ────────────────
+  const _RVC_MONTHS = ['','January','February','March','April','May','June','July','August','September','October','November','December'];
+  const _RVC_SF     = {1:.80,2:.90,3:1.05,4:1.10,5:1.10,6:1.05,7:.95,8:.90,9:1.05,10:1.15,11:1.10,12:1.15};
+
+  function _rvcMove(e, svg) {
+    const padL = +svg.dataset.padl, chartW = +svg.dataset.chartw;
+    const rect = svg.getBoundingClientRect();
+    const svgX = (e.clientX - rect.left) * (540 / rect.width);
+    const m    = Math.max(1, Math.min(12, Math.round((svgX - padL) / chartW * 11) + 1));
+    const xPos = padL + (m - 1) / 11 * chartW;
+
+    const xh = document.getElementById(svg.id + '-xh');
+    if (xh) { xh.setAttribute('x1', xPos); xh.setAttribute('x2', xPos); xh.style.display = ''; }
+
+    const curD  = JSON.parse(svg.dataset.cur);
+    const prD   = JSON.parse(svg.dataset.prior);
+    const curY  = +svg.dataset.curyear, prY = +svg.dataset.prioryear;
+    const mn    = _RVC_MONTHS[m];
+    const cur   = curD[m], prior = prD[m];
+
+    let html = `<div style="font-weight:600;color:#1e293b;margin-bottom:4px">${mn}</div>`;
+    html += cur   !== undefined ? `<div style="color:#3b82f6">${curY}: ${cur} review${cur!==1?'s':''}</div>`   : `<div style="color:#94a3b8">${curY}: no data</div>`;
+    html += prior !== undefined ? `<div style="color:#64748b">${prY}: ${prior} review${prior!==1?'s':''}</div>` : `<div style="color:#94a3b8">${prY}: no data</div>`;
+
+    if (cur !== undefined && prior !== undefined && prior > 0) {
+      const pct  = Math.round((cur - prior) / prior * 100);
+      const sign = pct >= 0 ? '+' : '';
+      const arr  = pct > 5 ? '↑' : pct < -5 ? '↓' : '→';
+      const col  = Math.abs(pct) <= 5 ? '#64748b' : pct > 0 ? '#16a34a' : '#dc2626';
+      html += `<div style="color:${col};border-top:1px solid #f1f5f9;margin-top:3px;padding-top:3px">YoY: ${sign}${pct}% ${arr}</div>`;
+      const sf = _RVC_SF[m] || 1;
+      const adjPct  = Math.round(((cur / sf) - (prior / sf)) / (prior / sf) * 100);
+      const adjSign = adjPct >= 0 ? '+' : '';
+      html += `<div style="font-size:10px;color:#64748b">Seasonally adjusted: ${adjSign}${adjPct}%</div>`;
+    }
+
+    let tt = document.getElementById('rvc-tt');
+    if (!tt) {
+      tt = document.createElement('div');
+      tt.id = 'rvc-tt';
+      tt.style.cssText = 'position:fixed;pointer-events:none;z-index:999;background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;font-size:11px;line-height:1.6;box-shadow:0 2px 8px rgba(0,0,0,.1);min-width:160px';
+      document.body.appendChild(tt);
+    }
+    tt.innerHTML = html;
+    tt.style.display = 'block';
+    tt.style.left = (e.clientX + 14) + 'px';
+    tt.style.top  = (e.clientY - 10) + 'px';
+    const ttR = tt.getBoundingClientRect();
+    if (ttR.right  > window.innerWidth  - 8) tt.style.left = (e.clientX - ttR.width  - 14) + 'px';
+    if (ttR.bottom > window.innerHeight - 8) tt.style.top  = (e.clientY - ttR.height -  5) + 'px';
+  }
+
+  function _rvcLeave(svg) {
+    const xh = document.getElementById(svg.id + '-xh');
+    if (xh) xh.style.display = 'none';
+    const tt = document.getElementById('rvc-tt');
+    if (tt) tt.style.display = 'none';
+  }
+
+  function renderReviewTrendChart(monthlyReviewCounts, seasonalityAdjusted, comparisonMethod, dataCollectionStart) {
+    const counts = monthlyReviewCounts || {};
+    if (!Object.keys(counts).length) return '';
+
+    const sortedKeys = Object.keys(counts).sort();
+    const latestKey  = sortedKeys[sortedKeys.length - 1];
+    const curYear    = latestKey ? +latestKey.split('-')[0] : new Date().getFullYear();
+    const priorYear  = curYear - 1;
+
+    const curData = {}, priorData = {};
+    for (const [k, v] of Object.entries(counts)) {
+      const [yr, mo] = k.split('-').map(Number);
+      if (yr === curYear)   curData[mo]   = v;
+      if (yr === priorYear) priorData[mo] = v;
+    }
+
+    const allVals = [...Object.values(curData), ...Object.values(priorData)].filter(v => v > 0);
+    const maxVal  = Math.max(...allVals, 1);
+
+    const VW = 540, padL = 8, padR = 8, padT = 10, padB = 22;
+    const chartW = VW - padL - padR, chartH = 113, VH = padT + chartH + padB;
+    const xOf   = m => padL + (m - 1) / 11 * chartW;
+    const yOf   = v => padT + chartH - Math.max(0, Math.min(1, v / maxVal)) * chartH;
+    const yZero = padT + chartH;
+    const rn    = n => Math.round(n * 10) / 10;
+
+    function linePath(data) {
+      const parts = []; let open = false;
+      for (let m = 1; m <= 12; m++) {
+        if (data[m] !== undefined) { parts.push((open ? 'L' : 'M') + rn(xOf(m)) + ',' + rn(yOf(data[m]))); open = true; }
+        else open = false;
+      }
+      return parts.join(' ');
+    }
+
+    function areaPath(data) {
+      const segs = []; let seg = null;
+      for (let m = 1; m <= 12; m++) {
+        if (data[m] !== undefined) { if (!seg) seg = []; seg.push(m); }
+        else if (seg) { segs.push(seg); seg = null; }
+      }
+      if (seg) segs.push(seg);
+      return segs.map(s => {
+        const pts = s.map(m => `L${rn(xOf(m))},${rn(yOf(data[m]))}`).join(' ');
+        return `M${rn(xOf(s[0]))},${yZero} ${pts} L${rn(xOf(s[s.length-1]))},${yZero} Z`;
+      }).join(' ');
+    }
+
+    function dotsSvg(data, rad, fill) {
+      return Object.entries(data).map(([mo, v]) => {
+        const x = rn(xOf(+mo)), y = v > 0 ? rn(yOf(v)) : yZero;
+        return v > 0
+          ? `<circle cx="${x}" cy="${y}" r="${rad}" fill="${fill}"/>`
+          : `<circle cx="${x}" cy="${y}" r="${rad}" fill="white" stroke="${fill}" stroke-width="1.5"/>`;
+      }).join('');
+    }
+
+    const guides  = [1,.75,.5,.25].map(p => `<line x1="${padL}" y1="${rn(yOf(maxVal*p))}" x2="${VW-padR}" y2="${rn(yOf(maxVal*p))}" stroke="#e2e8f0" stroke-width="0.5"/>`).join('');
+    const mLabels = Array.from({length:12},(_,i)=>i+1).map(m => `<text x="${rn(xOf(m))}" y="${VH-4}" text-anchor="middle" font-size="9" fill="#94a3b8">${MONTH_LABELS[m]}</text>`).join('');
+
+    const cid = 'rvc' + Math.random().toString(36).slice(2,9);
+    const esc = s => s.replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+    const ap = areaPath(curData), lc = linePath(curData), lp = linePath(priorData);
+
+    const svgEl = `<svg id="${cid}" viewBox="0 0 ${VW} ${VH}" width="100%" height="${VH}"
+        style="display:block;overflow:visible;cursor:crosshair"
+        data-cur="${esc(JSON.stringify(curData))}" data-prior="${esc(JSON.stringify(priorData))}"
+        data-curyear="${curYear}" data-prioryear="${priorYear}"
+        data-padl="${padL}" data-chartw="${chartW}"
+        onmousemove="_rvcMove(event,this)" onmouseleave="_rvcLeave(this)">
+      ${guides}
+      <line id="${cid}-xh" x1="0" y1="${padT}" x2="0" y2="${yZero}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2" style="display:none" pointer-events="none"/>
+      ${ap ? `<path d="${ap}" fill="#3b82f6" fill-opacity="0.15" stroke="none"/>` : ''}
+      ${lp ? `<path d="${lp}" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 3"/>` : ''}
+      ${lc ? `<path d="${lc}" fill="none" stroke="#3b82f6" stroke-width="2"/>` : ''}
+      ${dotsSvg(priorData, 3, '#94a3b8')}
+      ${dotsSvg(curData,   4, '#3b82f6')}
+      ${mLabels}
+    </svg>`;
+
+    const legend = `<div style="display:flex;align-items:center;gap:14px;font-size:10px;color:#64748b;margin-bottom:3px">
+      <span style="display:flex;align-items:center;gap:5px"><svg width="20" height="4" style="overflow:visible"><line x1="0" y1="2" x2="20" y2="2" stroke="#3b82f6" stroke-width="2"/></svg>${curYear}</span>
+      <span style="display:flex;align-items:center;gap:5px"><svg width="20" height="4" style="overflow:visible"><line x1="0" y1="2" x2="20" y2="2" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4 2"/></svg>${priorYear}</span>
+    </div>`;
+
+    const bothMs = Array.from({length:12},(_,i)=>i+1).filter(m => curData[m]!==undefined && priorData[m]!==undefined && priorData[m]>0);
+    let yoySummary;
+    if (bothMs.length < 3) {
+      yoySummary = `<div class="sparkline-footer" style="font-style:normal;color:#64748b">Insufficient data for year-over-year comparison</div>`;
+    } else {
+      const avg  = bothMs.reduce((s,m) => s + (curData[m]-priorData[m])/priorData[m]*100, 0) / bothMs.length;
+      const sign = avg >= 0 ? '+' : '';
+      const arr  = avg > 5 ? '↑' : avg < -5 ? '↓' : '→';
+      const col  = Math.abs(avg) <= 5 ? '#64748b' : avg > 0 ? '#16a34a' : '#dc2626';
+      yoySummary = `<div class="sparkline-footer" style="font-style:normal;color:${col}">Average year-over-year: ${sign}${Math.round(avg)}% ${arr}</div>`;
+    }
+
+    const adjNote = seasonalityAdjusted ? `<div class="sparkline-footer">Volumes adjusted for DFW seasonal patterns</div>` : '';
+
+    return `<div class="sparkline-wrap">
+      <div class="sparkline-label" style="margin-bottom:4px">Monthly Review Volume — Year over Year</div>
+      ${legend}${svgEl}${yoySummary}${adjNote}
     </div>`;
   }
 
@@ -831,7 +1194,7 @@
       rows.push(`<div class="suppl-row"><span class="suppl-key">Comparison basis</span><span class="suppl-val">${label}</span></div>`);
     }
 
-    const sparkline = renderSparkline(monthlyReviewCounts, s.seasonalityAdjusted, s.comparisonMethod, dataCollectionStart);
+    const sparkline = renderReviewTrendChart(monthlyReviewCounts, s.seasonalityAdjusted, s.comparisonMethod, dataCollectionStart);
     if (!rows.length && !sparkline) return '';
     return `<div class="suppl-panel">${sparkline}${rows.join('')}</div>`;
   }
@@ -1103,10 +1466,14 @@
       el.innerHTML = '<div class="recent-empty">No restaurants scored yet in this session.</div>';
       return;
     }
-    el.innerHTML = `<div class="recent-list">${recent.map(r => {
-      const c  = riskColor(r.overallScore);
-      const bg = riskBg(r.overallScore);
-      return `<div class="recent-row" onclick="loadRecent('${r.id}')">
+    const hintDismissed = (() => { try { return localStorage.getItem('bh_recent_hint'); } catch { return null; } })();
+    const hint = hintDismissed ? '' : '<div class="recent-hint">Click any result to view score</div>';
+    el.innerHTML = hint + `<div class="recent-list">${recent.map(r => {
+      const c        = riskColor(r.overallScore);
+      const bg       = riskBg(r.overallScore);
+      const isActive = r.id === activeRecentId;
+      const activeShadow = isActive ? `box-shadow:inset 3px 0 0 ${riskColor(r.overallScore)};` : '';
+      return `<div class="recent-row${isActive ? ' recent-row-active' : ''}" style="${activeShadow}" data-rid="${r.id}" onclick="loadRecent('${r.id}')">
         <div class="recent-score-badge" style="background:${bg};color:${c}">${r.overallScore}</div>
         <div>
           <div class="recent-name">${r.name}</div>
@@ -1117,13 +1484,41 @@
     }).join('')}</div>`;
   }
 
-  function loadRecent(id) {
-    const data = cache[id];
-    if (!data) return;
+  async function loadRecent(id) {
+    if (cache[id]) { _showRecentResult(cache[id]); return; }
+
+    const row = document.querySelector(`[data-rid="${id}"]`);
+    if (row) row.style.opacity = '0.5';
+
+    try {
+      const resp = await fetch(`${API}/api/v1/restaurants/search-and-score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ restaurantId: id }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.message || `Server returned ${resp.status}`);
+      }
+      const data = await resp.json();
+      cache[data.id] = data;
+      addToRecent(data);
+      _showRecentResult(data);
+    } catch (e) {
+      setStatus(e.message, true);
+    } finally {
+      if (row) row.style.opacity = '';
+    }
+  }
+
+  function _showRecentResult(data) {
+    activeRecentId = data.id;
+    try { localStorage.setItem('bh_recent_hint', '1'); } catch {}
     document.getElementById('disambig-section').classList.add('hidden');
     document.getElementById('result-inner').innerHTML = renderResult(data);
     document.getElementById('result-section').classList.remove('hidden');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    refreshUI();
+    document.getElementById('result-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // ── Refresh all dynamic sections ──────────────────────────────────────────
@@ -1198,6 +1593,7 @@
       const data = await resp.json();
       cache[data.id] = data;
       addToRecent(data);
+      activeRecentId = data.id;
       document.getElementById('disambig-section').classList.add('hidden');
       document.getElementById('result-inner').innerHTML = renderResult(data);
       document.getElementById('result-section').classList.remove('hidden');
@@ -1249,6 +1645,7 @@
 
       cache[data.id] = data;
       addToRecent(data);
+      activeRecentId = data.id;
       document.getElementById('disambig-section').classList.add('hidden');
       document.getElementById('result-inner').innerHTML = renderResult(data);
       document.getElementById('result-section').classList.remove('hidden');
@@ -1274,6 +1671,199 @@
   );
 
   renderRecent();
+
+  // ── Tab navigation ───────────────────────────────────────────────────────
+  function switchTab(name) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('tab-btn-' + name).classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+    if (name === 'backtesting') loadBacktestingData();
+  }
+
+  // ── Backtesting tab ──────────────────────────────────────────────────────
+  let _btLoaded = false;
+
+  async function loadBacktestingData() {
+    if (_btLoaded) return;
+    _btLoaded = true;
+
+    try {
+      const [summaryRes, cohortRes] = await Promise.all([
+        fetch(API + '/api/v1/backtesting/summary'),
+        fetch(API + '/api/v1/backtesting/cohort?cohortType=prospective&pageSize=100'),
+      ]);
+
+      const summary = summaryRes.ok ? await summaryRes.json() : null;
+      const cohort  = cohortRes.ok  ? await cohortRes.json()  : null;
+
+      renderBtSummary(summary);
+      renderBtMetrics(summary);
+      renderBtBandTable(summary);
+      renderBtSignalTable(summary);
+      renderBtCohortTable(cohort);
+    } catch (err) {
+      document.getElementById('bt-summary-hero').innerHTML =
+        '<div class="bt-hero-title">Model Validation</div>' +
+        '<div class="bt-error">Could not load backtesting data. Is the API running at ' + API + '?</div>';
+    }
+  }
+
+  function renderBtSummary(s) {
+    const hero = document.getElementById('bt-summary-hero');
+    if (!s) {
+      hero.innerHTML = '<div class="bt-hero-title">Model Validation</div><div class="bt-error">No data available.</div>';
+      return;
+    }
+    const text = s.plain_english_summary || s.note || 'Run the backtesting pipeline to generate results.';
+    hero.innerHTML =
+      '<div class="bt-hero-title">Model Validation — DFW Restaurants</div>' +
+      '<div class="bt-hero-lines">' + escHtml(text) + '</div>';
+  }
+
+  function renderBtMetrics(s) {
+    const row = document.getElementById('bt-metrics-row');
+    if (!s) return;
+    const total   = s.total_backtested ?? s.totalRetrospective ?? 0;
+    const prec    = s.overall?.precision_pct  != null ? s.overall.precision_pct + '%' : '—';
+    const rec     = s.overall?.recall_pct     != null ? s.overall.recall_pct + '%' : '—';
+    const auc     = s.overall?.auc_roc        != null ? s.overall.auc_roc : '—';
+    row.innerHTML = [
+      [total, 'Restaurants Backtested'],
+      [prec,  'Precision @ High Risk'],
+      [rec,   'Recall @ High Risk'],
+      [auc,   'AUC-ROC Score'],
+    ].map(([val, label]) =>
+      `<div class="bt-metric">
+        <div class="bt-metric-value">${val}</div>
+        <div class="bt-metric-label">${label}</div>
+      </div>`
+    ).join('');
+  }
+
+  const _bandColors = { low: 'var(--green)', moderate: 'var(--amber)', elevated: 'var(--orange)', high: 'var(--red)' };
+
+  function renderBtBandTable(s) {
+    const body = document.getElementById('bt-band-body');
+    const bands = s?.band_breakdown || s?.bandBreakdown;
+    if (!bands || !Object.keys(bands).length) {
+      body.innerHTML = '<tr><td colspan="5" style="color:var(--muted);font-size:13px">No retrospective data yet. Run the backtesting pipeline first.</td></tr>';
+      return;
+    }
+    const order = ['low', 'moderate', 'elevated', 'high'];
+    body.innerHTML = order.filter(b => bands[b]).map(b => {
+      const st = bands[b];
+      const color = _bandColors[b] || 'var(--text)';
+      return `<tr>
+        <td><span style="color:${color};font-weight:600">${b.charAt(0).toUpperCase()+b.slice(1)}</span> (${b === 'low' ? '80-100' : b === 'moderate' ? '60-79' : b === 'elevated' ? '40-59' : '0-39'})</td>
+        <td>${st.count ?? st.cnt ?? 0}</td>
+        <td>${st.closure_rate_90d != null ? st.closure_rate_90d + '%' : (st.closed180dCount != null ? '—' : '—')}</td>
+        <td>${st.closure_rate_180d != null ? st.closure_rate_180d + '%' : '—'}</td>
+        <td>${st.avg_score != null ? st.avg_score.toFixed(1) : '—'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderBtSignalTable(s) {
+    const body = document.getElementById('bt-signal-body');
+    const signals = s?.signal_importance;
+    if (!signals || !signals.length) {
+      body.innerHTML = '<tr><td colspan="4" style="color:var(--muted);font-size:13px">Signal importance data not yet available.</td></tr>';
+      return;
+    }
+    const maxDelta = Math.max(...signals.map(x => x.delta || 0), 1);
+    body.innerHTML = signals.map((item, i) => {
+      const barW = Math.round((item.delta / maxDelta) * 120);
+      const label = item.signal.replace(/_score$/, '').replace(/_/g, ' ');
+      return `<tr>
+        <td>${i + 1}. ${label.charAt(0).toUpperCase() + label.slice(1)}</td>
+        <td>${item.avg_closed?.toFixed(1) ?? '—'}</td>
+        <td>${item.avg_open?.toFixed(1) ?? '—'}</td>
+        <td>
+          <div class="bt-signal-bar-wrap">
+            <div class="bt-signal-bar" style="width:${barW}px"></div>
+            <span>+${item.delta?.toFixed(1) ?? '0'}</span>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  const _outcomeLabel = {
+    open: '✓ Open', reduced_hours: '⚠ Reduced hours',
+    closed_temporarily: '⚡ Closed (temp)', closed_permanently: '✗ Closed',
+    unknown: '? Unknown',
+  };
+  const _outcomeColor = {
+    open: 'var(--green)', reduced_hours: 'var(--amber)',
+    closed_temporarily: 'var(--orange)', closed_permanently: 'var(--red)',
+    unknown: 'var(--muted)',
+  };
+
+  function renderBtCohortTable(data) {
+    const status = document.getElementById('bt-cohort-status');
+    const body   = document.getElementById('bt-cohort-body');
+
+    if (!data) {
+      status.textContent = 'Could not load cohort data.';
+      body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);font-size:13px">No data.</td></tr>';
+      return;
+    }
+
+    const days = data.daysUntilNext90dOutcome;
+    status.innerHTML =
+      `<span class="bt-cohort-pill">${data.total ?? 0} restaurants tracked</span>` +
+      (days > 0 ? ` &mdash; next 90-day outcomes in <strong>${days}</strong> day${days === 1 ? '' : 's'}` : '');
+
+    if (!data.items || !data.items.length) {
+      body.innerHTML = '<tr><td colspan="6" style="color:var(--muted);font-size:13px">No cohort restaurants yet. Run cohort_builder.py to populate.</td></tr>';
+      return;
+    }
+
+    const _bandColor = { low: 'var(--green)', moderate: 'var(--amber)', elevated: 'var(--orange)', high: 'var(--red)' };
+    body.innerHTML = data.items.slice(0, 50).map(item => {
+      const band  = item.baselineRiskBand || 'unknown';
+      const bcolor = _bandColor[band] || 'var(--muted)';
+      const o90   = item.outcome90d  ? `<span style="color:${_outcomeColor[item.outcome90d]||'var(--muted)'}">${_outcomeLabel[item.outcome90d]||item.outcome90d}</span>` : '<span style="color:var(--muted)">Pending</span>';
+      const o180  = item.outcome180d ? `<span style="color:${_outcomeColor[item.outcome180d]||'var(--muted)'}">${_outcomeLabel[item.outcome180d]||item.outcome180d}</span>` : '<span style="color:var(--muted)">Pending</span>';
+      return `<tr>
+        <td style="font-weight:600">${escHtml(item.restaurantName || '—')}</td>
+        <td>${escHtml(item.restaurantCity || '—')}</td>
+        <td style="font-weight:700">${item.baselineScore ?? '—'}</td>
+        <td><span style="color:${bcolor};font-weight:600">${band}</span></td>
+        <td>${o90}</td>
+        <td>${o180}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  async function loadOutscraperQuota() {
+    try {
+      const r = await fetch(API + '/api/v1/admin/outscraper-quota');
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      const pct = d.pct_used || 0;
+      const color = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
+      const proj = d.projected_monthly ? ` &mdash; projected ${d.projected_monthly.toLocaleString()}/month on biweekly schedule` : '';
+      document.getElementById('quota-label').innerHTML =
+        `<span style="color:var(--text)">Outscraper:</span> ` +
+        `<strong style="color:var(--text)">${d.records_used.toLocaleString()} / ${d.cap.toLocaleString()}</strong>` +
+        ` used (${d.estimated_cost})${proj}`;
+      const bar = document.getElementById('quota-bar');
+      bar.style.width = pct + '%';
+      bar.style.background = color;
+    } catch(e) {
+      document.getElementById('quota-label').textContent = 'Outscraper quota unavailable';
+    }
+  }
+
+  loadOutscraperQuota();
 </script>
 </body>
 </html>

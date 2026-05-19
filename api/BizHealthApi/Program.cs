@@ -420,6 +420,8 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             deliveryPlatformCount  = score.DeliveryPlatformCount,
             deliveryStatus         = score.DeliveryStatus,
             deliveryPlatformLoss   = score.DeliveryPlatformLoss,
+            // Phase 10: composite risk cap
+            compositeRiskCap       = score.CompositeRiskCap,
         },
         details = new
         {
@@ -455,6 +457,134 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             monthlyReviewCounts,
             dataCollectionStart,
         },
+    });
+});
+
+// GET /api/v1/backtesting/summary — returns the latest accuracy report from disk.
+// Falls back to a live computation from DB data when no file is present.
+app.MapGet("/api/v1/backtesting/summary", async (BizHealthDbContext db) =>
+{
+    // Try reading the most-recent saved report first.
+    var reportDir = new System.IO.DirectoryInfo("/backtesting_results");
+    if (reportDir.Exists)
+    {
+        var latest = reportDir
+            .GetFiles("report_*.json")
+            .OrderByDescending(f => f.Name)
+            .FirstOrDefault();
+
+        if (latest is not null)
+        {
+            var json = await System.IO.File.ReadAllTextAsync(latest.FullName);
+            using var doc = JsonDocument.Parse(json);
+            return Results.Ok(doc.RootElement.Clone());
+        }
+    }
+
+    // No saved report — compute live summary from DB.
+    var totalCohort = await db.BacktestCohorts.CountAsync(b => b.CohortType == "prospective");
+    var totalRetro  = await db.BacktestCohorts.CountAsync(b => b.CohortType == "retrospective");
+
+    var bandBreakdown = await db.BacktestCohorts
+        .Where(b => b.CohortType == "retrospective")
+        .GroupBy(b => b.BaselineRiskBand)
+        .Select(g => new
+        {
+            band             = g.Key,
+            count            = g.Count(),
+            avgScore         = g.Average(b => (double?)b.BaselineScore) ?? 0,
+            closed180dCount  = g.Count(b => b.Outcome180d == "closed_permanently" || b.Outcome180d == "closed_temporarily"),
+        })
+        .ToListAsync();
+
+    return Results.Ok(new
+    {
+        generatedAt         = DateTime.UtcNow,
+        totalProspective    = totalCohort,
+        totalRetrospective  = totalRetro,
+        bandBreakdown,
+        note = "Run test_accuracy_report.py inside the scrapers container to generate a full report.",
+    });
+});
+
+// GET /api/v1/backtesting/cohort — paginated list of cohort members with baseline scores and outcomes.
+app.MapGet("/api/v1/backtesting/cohort", async (
+    BizHealthDbContext db,
+    string? cohortType,
+    string? band,
+    int page = 1,
+    int pageSize = 50) =>
+{
+    pageSize = Math.Clamp(pageSize, 1, 200);
+    cohortType ??= "prospective";
+
+    var query = db.BacktestCohorts
+        .Where(b => b.CohortType == cohortType);
+
+    if (!string.IsNullOrEmpty(band))
+        query = query.Where(b => b.BaselineRiskBand == band);
+
+    var total = await query.CountAsync();
+
+    var items = await query
+        .OrderByDescending(b => b.CreatedAt)
+        .Skip((page - 1) * pageSize)
+        .Take(pageSize)
+        .Select(b => new
+        {
+            id                = b.Id,
+            restaurantId      = b.RestaurantId,
+            restaurantName    = b.Restaurant != null ? b.Restaurant.Name : null,
+            restaurantCity    = b.Restaurant != null ? b.Restaurant.City : null,
+            cohortType        = b.CohortType,
+            baselineScore     = b.BaselineScore,
+            baselineRiskBand  = b.BaselineRiskBand,
+            baselineDate      = b.BaselineDate,
+            outcome90d        = b.Outcome90d,
+            outcome180d       = b.Outcome180d,
+            outcome90dDate    = b.Outcome90dDate,
+            outcome180dDate   = b.Outcome180dDate,
+            closureDate       = b.ClosureDate,
+            notes             = b.Notes,
+        })
+        .ToListAsync();
+
+    var dayUntil90d = items
+        .Where(i => i.baselineDate.HasValue && i.outcome90d == null)
+        .Select(i => 90 - (DateTime.Today - i.baselineDate!.Value.ToDateTime(TimeOnly.MinValue)).Days)
+        .Where(d => d > 0)
+        .DefaultIfEmpty(0)
+        .Min();
+
+    return Results.Ok(new { page, pageSize, total, cohortType, items, daysUntilNext90dOutcome = dayUntil90d });
+});
+
+// GET /api/v1/admin/outscraper-quota — current month Outscraper usage summary.
+app.MapGet("/api/v1/admin/outscraper-quota", async (BizHealthDbContext db) =>
+{
+    const int monthlyCap    = 10_000;
+    const double costPer1k  = 3.00;
+
+    var currentMonth = DateTime.UtcNow.ToString("yyyy-MM");
+
+    var used = await db.OutscraperUsages
+        .Where(u => u.Month == currentMonth)
+        .SumAsync(u => (int?)u.RecordsFetched) ?? 0;
+
+    var remaining = Math.Max(0, monthlyCap - used);
+    var cost      = used / 1000.0 * costPer1k;
+    var pctUsed   = (int)Math.Round((double)used / monthlyCap * 100);
+
+    return Results.Ok(new
+    {
+        month              = currentMonth,
+        records_used       = used,
+        records_remaining  = remaining,
+        cap                = monthlyCap,
+        estimated_cost     = $"${cost:F2}",
+        pct_used           = pctUsed,
+        projected_monthly  = 9844,
+        schedule           = "biweekly (1st and 15th)",
     });
 });
 

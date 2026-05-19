@@ -107,5 +107,9 @@ public class HealthScore
     [Column("delivery_platform_loss")]
     public bool? DeliveryPlatformLoss { get; set; }
 
+    // Phase 10: composite risk cap
+    [Column("composite_risk_cap")]
+    public bool? CompositeRiskCap { get; set; }
+
     public Restaurant? Restaurant { get; set; }
 }
