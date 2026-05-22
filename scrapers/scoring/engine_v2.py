@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from scoring import seasonality
+from scoring.keyword_analyzer import analyze_keywords, compute_rating_distribution, compute_response_rates
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,113 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             source_divergence = True
             rating_trend_score = max(0, rating_trend_score - 5)
 
+    # ── Rating distribution, keywords, response rates (Phase 11) ─────────────
+    # Computed at score time from reviews_data stored by the scraper.
+    # Time-windowed aggregates (90d distribution, 60d keyword scan, 60d response
+    # rate) must be fresh — pre-computing at scrape time would produce stale results
+    # as the window slides day by day.
+    _outscraper_reviews: list[dict] = []
+    if outscraper_row:
+        _outscraper_reviews = outscraper_row.payload.get("reviews_data", [])
+
+    pct_5star_recent:      float | None = None
+    pct_1star_recent:      float | None = None
+    high_negative_rate     = False
+    negative_rate_rising   = False
+    bimodal_distribution   = False
+    lifetime_dist: dict    = {}
+
+    if _outscraper_reviews:
+        dist          = compute_rating_distribution(_outscraper_reviews)
+        recent_dist   = dist.get("recent_90d") or {}
+        lifetime_dist = dist.get("lifetime")   or {}
+
+        if recent_dist.get("count", 0) >= 5:
+            pct_1star_recent = recent_dist.get("1", 0.0)
+            pct_5star_recent = recent_dist.get("5", 0.0)
+            pct_1star_lifetime = lifetime_dist.get("1", 0.0)
+            pct_5star_lifetime = lifetime_dist.get("5", 0.0)
+
+            if pct_1star_recent > 30:
+                high_negative_rate = True
+                rating_trend_score = max(0, rating_trend_score - 15)
+
+            if pct_1star_lifetime > 0 and (pct_1star_recent - pct_1star_lifetime) >= 10:
+                negative_rate_rising = True
+                rating_trend_score   = max(0, rating_trend_score - 10)
+
+            if pct_5star_lifetime > 0 and (pct_5star_lifetime - pct_5star_recent) >= 15:
+                rating_trend_score = max(0, rating_trend_score - 10)
+
+            if pct_5star_recent > 60 and pct_1star_recent > 20:
+                bimodal_distribution = True
+                rating_trend_score   = max(0, rating_trend_score - 10)
+
+            if pct_5star_recent > 70:
+                rating_trend_score = min(100, rating_trend_score + 5)
+
+    # ── Keyword flags (Phase 11) ───────────────────────────────────────────────
+    sanitation_flag               = False
+    operational_instability_flag  = False
+    ownership_change_flag         = False
+    quality_decline_flag          = False
+    financial_stress_flag         = False
+    keyword_findings: dict        = {}
+
+    if _outscraper_reviews:
+        keyword_findings = analyze_keywords(_outscraper_reviews, cutoff_days=60)
+        if keyword_findings:
+            if "sanitation_risk" in keyword_findings:
+                sanitation_flag    = True
+                rating_trend_score = max(0, rating_trend_score - 20)
+
+            oi_count = keyword_findings.get("operational_instability", {}).get("match_count", 0)
+            if oi_count >= 2:
+                operational_instability_flag = True
+                rating_trend_score           = max(0, rating_trend_score - 15)
+
+            if "ownership_change" in keyword_findings:
+                ownership_change_flag = True
+                rating_trend_score    = max(0, rating_trend_score - 10)
+
+            qd_count = keyword_findings.get("quality_decline", {}).get("match_count", 0)
+            if qd_count >= 3:
+                quality_decline_flag = True
+                rating_trend_score   = max(0, rating_trend_score - 10)
+
+            fs_count = keyword_findings.get("financial_stress", {}).get("match_count", 0)
+            if fs_count >= 3:
+                financial_stress_flag = True
+                rating_trend_score    = max(0, rating_trend_score - 5)
+
+            flagged_count = sum([
+                sanitation_flag, operational_instability_flag, ownership_change_flag,
+                quality_decline_flag, financial_stress_flag,
+            ])
+            if flagged_count >= 3:
+                rating_trend_score = max(0, rating_trend_score - 10)
+
+    # ── Response rate trend (Phase 11) ────────────────────────────────────────
+    response_rate_declining = False
+    owner_disengaged        = False
+    response_rate_recent_val: int | None = None
+    response_rate_prior_val:  int | None = None
+
+    if _outscraper_reviews:
+        response_rate_recent_val, response_rate_prior_val = compute_response_rates(_outscraper_reviews)
+
+        if response_rate_recent_val is not None and response_rate_prior_val is not None:
+            drop = response_rate_prior_val - response_rate_recent_val
+            if response_rate_prior_val > 30 and response_rate_recent_val == 0:
+                owner_disengaged   = True
+                rating_trend_score = max(0, rating_trend_score - 15)
+            elif drop >= 30:
+                response_rate_declining = True
+                rating_trend_score      = max(0, rating_trend_score - 10)
+
+            if response_rate_recent_val > 50 and response_rate_prior_val > 50:
+                rating_trend_score = min(100, rating_trend_score + 5)
+
     # Review count confidence multiplier.
     review_count_confidence: str
     _confidence_review_count = google_review_count or (
@@ -304,7 +412,11 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         if inspection_row.scraped_at:
             insp_scraped_date = inspection_row.scraped_at.strftime("%Y-%m-%d")
         if inspection_records_raw:
-            health_component = int(float(inspection_records_raw[0].get("score", 0)))
+            _raw_score = inspection_records_raw[0].get("score", 0) or 0
+            try:
+                health_component = int(float(_raw_score))
+            except (ValueError, TypeError):
+                health_component = 0
 
     tabc_component: int = 0
     tabc_record: Optional[dict] = None
@@ -606,6 +718,61 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "flag": "source_divergence",
         })
 
+    # Phase 11: rating distribution factor
+    if pct_1star_recent is not None:
+        dist_flags = []
+        if high_negative_rate:     dist_flags.append("high_negative_rate")
+        if negative_rate_rising:   dist_flags.append("negative_rate_rising")
+        if bimodal_distribution:   dist_flags.append("bimodal_distribution")
+        pct_1star_lifetime_val = lifetime_dist.get("1", 0.0)
+        rating_trend_factors.append({
+            "signal": "outscraper_reviews",
+            "label":  "1-star review rate (last 90 days)",
+            "value":  f"{pct_1star_recent:.0f}% (vs {pct_1star_lifetime_val:.0f}% lifetime)",
+            "impact": "negative" if high_negative_rate or negative_rate_rising else "neutral",
+            "weight": "high",
+            "flag":   dist_flags[0] if dist_flags else None,
+        })
+
+    # Phase 11: keyword findings factor
+    if keyword_findings:
+        kw_flag = next(
+            (f for f, set_val in [
+                ("sanitation_flag",              sanitation_flag),
+                ("operational_instability_flag", operational_instability_flag),
+                ("ownership_change_flag",        ownership_change_flag),
+                ("quality_decline_flag",         quality_decline_flag),
+                ("financial_stress_flag",        financial_stress_flag),
+            ] if set_val), None
+        )
+        parts = []
+        for cat, data in keyword_findings.items():
+            n = data.get("match_count", 0)
+            cat_label = cat.replace("_", " ")
+            parts.append(f"{n} mention{'s' if n != 1 else ''} of {cat_label}")
+        rating_trend_factors.append({
+            "signal": "outscraper_reviews",
+            "label":  "Recent review keywords",
+            "value":  "; ".join(parts[:3]),
+            "impact": "negative" if kw_flag else "neutral",
+            "weight": "medium",
+            "flag":   kw_flag,
+            "keywordFindings": keyword_findings,
+        })
+
+    # Phase 11: response rate trend factor
+    if response_rate_recent_val is not None and response_rate_prior_val is not None:
+        rr_flag = "owner_disengaged" if owner_disengaged else ("response_rate_declining" if response_rate_declining else None)
+        rr_impact = "negative" if rr_flag else ("positive" if response_rate_recent_val > 50 and response_rate_prior_val > 50 else "neutral")
+        rating_trend_factors.append({
+            "signal": "outscraper_reviews",
+            "label":  "Owner response rate trend",
+            "value":  f"Dropped from {response_rate_prior_val}% to {response_rate_recent_val}% in last 60 days" if response_rate_declining or owner_disengaged else f"{response_rate_recent_val}% (last 60d) vs {response_rate_prior_val}% (prior 60d)",
+            "impact": rr_impact,
+            "weight": "medium",
+            "flag":   rr_flag,
+        })
+
     rating_trend_factors.append({
         "signal": "review_count_confidence",
         "label": "Rating confidence",
@@ -619,7 +786,11 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
 
     if inspection_records_raw:
         latest_insp = inspection_records_raw[0]
-        insp_score  = int(float(latest_insp.get("score", 0)))
+        _raw_insp   = latest_insp.get("score", 0) or 0
+        try:
+            insp_score = int(float(_raw_insp))
+        except (ValueError, TypeError):
+            insp_score = 0
         insp_date   = (latest_insp.get("insp_date") or "")[:10]
 
         operational_factors.append({
@@ -632,7 +803,11 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         })
 
         if len(inspection_records_raw) >= 2:
-            prev_score = int(float(inspection_records_raw[1].get("score", 0)))
+            _raw_prev  = inspection_records_raw[1].get("score", 0) or 0
+            try:
+                prev_score = int(float(_raw_prev))
+            except (ValueError, TypeError):
+                prev_score = 0
             if insp_score > prev_score + 3:
                 trend, trend_impact = "Improving", "positive"
             elif insp_score < prev_score - 3:
@@ -873,7 +1048,15 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 sba_latest_amount,     tax_delinquency_years,
                 doordash_listed,       ubereats_listed,
                 delivery_platform_count, delivery_status,
-                delivery_platform_loss, composite_risk_cap
+                delivery_platform_loss, composite_risk_cap,
+                pct_5star_recent,      pct_1star_recent,
+                high_negative_rate,    negative_rate_rising,
+                bimodal_distribution,
+                sanitation_flag,       operational_instability_flag,
+                ownership_change_flag, quality_decline_flag,
+                financial_stress_flag, keyword_findings,
+                response_rate_declining, owner_disengaged,
+                response_rate_recent,  response_rate_prior
             ) VALUES (
                 :restaurant_id,
                 :review_velocity_score, :rating_trend_score,
@@ -891,7 +1074,15 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 :sba_latest_amount,     :tax_delinquency_years,
                 :doordash_listed,       :ubereats_listed,
                 :delivery_platform_count, :delivery_status,
-                :delivery_platform_loss, :composite_risk_cap
+                :delivery_platform_loss, :composite_risk_cap,
+                :pct_5star_recent,     :pct_1star_recent,
+                :high_negative_rate,   :negative_rate_rising,
+                :bimodal_distribution,
+                :sanitation_flag,      :operational_instability_flag,
+                :ownership_change_flag, :quality_decline_flag,
+                :financial_stress_flag, CAST(:keyword_findings AS jsonb),
+                :response_rate_declining, :owner_disengaged,
+                :response_rate_recent, :response_rate_prior
             )
             """
         ),
@@ -925,8 +1116,23 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "ubereats_listed":           ubereats_listed,
             "delivery_platform_count":   delivery_platform_count,
             "delivery_status":           delivery_status,
-            "delivery_platform_loss":    delivery_platform_loss,
-            "composite_risk_cap":        composite_risk_cap,
+            "delivery_platform_loss":         delivery_platform_loss,
+            "composite_risk_cap":             composite_risk_cap,
+            "pct_5star_recent":               pct_5star_recent,
+            "pct_1star_recent":               pct_1star_recent,
+            "high_negative_rate":             high_negative_rate,
+            "negative_rate_rising":           negative_rate_rising,
+            "bimodal_distribution":           bimodal_distribution,
+            "sanitation_flag":                sanitation_flag,
+            "operational_instability_flag":   operational_instability_flag,
+            "ownership_change_flag":          ownership_change_flag,
+            "quality_decline_flag":           quality_decline_flag,
+            "financial_stress_flag":          financial_stress_flag,
+            "keyword_findings":               json.dumps(keyword_findings) if keyword_findings else None,
+            "response_rate_declining":        response_rate_declining,
+            "owner_disengaged":               owner_disengaged,
+            "response_rate_recent":           response_rate_recent_val,
+            "response_rate_prior":            response_rate_prior_val,
         },
     )
     session.commit()
@@ -971,7 +1177,25 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         "delivery_status":          delivery_status,
         "delivery_platform_loss":   delivery_platform_loss,
         # Phase 10: composite risk cap
-        "composite_risk_cap":       composite_risk_cap,
+        "composite_risk_cap":             composite_risk_cap,
+        # Phase 11: rating distribution
+        "pct_5star_recent":               pct_5star_recent,
+        "pct_1star_recent":               pct_1star_recent,
+        "high_negative_rate":             high_negative_rate,
+        "negative_rate_rising":           negative_rate_rising,
+        "bimodal_distribution":           bimodal_distribution,
+        # Phase 11: keyword flags
+        "sanitation_flag":                sanitation_flag,
+        "operational_instability_flag":   operational_instability_flag,
+        "ownership_change_flag":          ownership_change_flag,
+        "quality_decline_flag":           quality_decline_flag,
+        "financial_stress_flag":          financial_stress_flag,
+        "keyword_findings":               keyword_findings,
+        # Phase 11: response rate trend
+        "response_rate_declining":        response_rate_declining,
+        "owner_disengaged":               owner_disengaged,
+        "response_rate_recent":           response_rate_recent_val,
+        "response_rate_prior":            response_rate_prior_val,
     }
     logger.info(
         "v2 scored restaurant_id=%s overall=%s financial=%s sba_default=%s "

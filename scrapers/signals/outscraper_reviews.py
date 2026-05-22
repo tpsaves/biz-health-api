@@ -1,8 +1,10 @@
 """Outscraper Google Maps Reviews scraper.
 
-Fetches up to 12 months of review history per restaurant, enabling true monthly
-breakdowns that the Google Places API cannot provide (it returns only 5 reviews max).
-Outscraper is pay-per-use, so this runs biweekly (1st and 15th of each month).
+Fetches recent reviews per restaurant and stores the complete raw review objects.
+The scraper's only job is to fetch faithfully and store everything — aggregates
+(monthly counts, rating distribution, keyword findings) are computed by the
+scoring engine at score time from the stored reviews_data.
+Runs biweekly on the 1st and 15th of each month.
 """
 
 import json
@@ -21,10 +23,10 @@ from signals.outscraper_quota import check_quota, log_usage, MONTHLY_CAP
 logger = logging.getLogger(__name__)
 
 _OUTSCRAPER_URL = "https://api.app.outscraper.com/maps/reviews-v3"
-_POLL_URL = "https://api.app.outscraper.com/requests/{}"
+_POLL_URL       = "https://api.app.outscraper.com/requests/{}"
 # 46 reviews × 107 restaurants × 2 runs/month = 9,844 records (~$29.53/month)
-_MAX_REVIEWS = 46
-_POLL_RETRIES = 20
+_MAX_REVIEWS   = 46
+_POLL_RETRIES  = 20
 _POLL_INTERVAL = 6   # seconds between status polls
 
 
@@ -35,19 +37,15 @@ def scrape_outscraper_reviews(
     session: Session,
     city: str = "",
 ) -> dict:
-    """Fetch up to 12 months of Google reviews from Outscraper and write to raw_signals.
+    """Fetch recent Google reviews from Outscraper and store the full raw payload.
 
-    Outscraper returns full review history with timestamps, enabling true monthly
-    breakdowns for year-over-year comparison — something the 5-review Google
-    Places API snapshot cannot support.
+    Stores the complete reviews_data array so the scoring engine can compute
+    any aggregate (rating distribution, keyword flags, response rates) at score
+    time without re-fetching. monthly_breakdown is also stored as a convenience
+    for the sparkline chart which needs 12-month counts without re-parsing.
 
     Uses a text search query (name + city) rather than place_id: prefix because
     the place_id: format returns empty results from the reviews-v3 endpoint.
-    Text search is disambiguated by including the city when available.
-
-    In C#, you'd model the polling loop as a Task with CancellationToken;
-    here we block the calling thread with time.sleep() since APScheduler runs
-    jobs in daemon threads and blocking is acceptable for a background job.
     """
     api_key = os.environ.get("OUTSCRAPER_API_KEY", "")
     if not api_key:
@@ -62,11 +60,8 @@ def scrape_outscraper_reviews(
         )
         session.execute(
             text(
-                """
-                INSERT INTO raw_signals (restaurant_id, source, payload)
-                VALUES (:rid, 'outscraper_quota_exceeded',
-                        CAST(:payload AS jsonb))
-                """
+                "INSERT INTO raw_signals (restaurant_id, source, payload) "
+                "VALUES (:rid, 'outscraper_quota_exceeded', CAST(:payload AS jsonb))"
             ),
             {
                 "rid":     restaurant_id,
@@ -74,7 +69,7 @@ def scrape_outscraper_reviews(
             },
         )
         session.commit()
-        return {"monthly_breakdown": {}, "total_reviews_fetched": 0, "quota_exceeded": True}
+        return {"reviews_data": [], "monthly_breakdown": {}, "total_reviews_fetched": 0, "quota_exceeded": True}
 
     reviews_limit = _MAX_REVIEWS if quota["remaining"] >= _MAX_REVIEWS else quota["remaining"]
     if reviews_limit < _MAX_REVIEWS:
@@ -92,47 +87,46 @@ def scrape_outscraper_reviews(
     resp = httpx.get(
         _OUTSCRAPER_URL,
         params={
-            "query": query,
-            "limit": 1,             # number of places to look up
+            "query":        query,
+            "limit":        1,             # number of places to look up
             "reviewsLimit": reviews_limit,
-            "sort": "newest",
+            "sort":         "newest",
         },
         headers=headers,
         timeout=30.0,
     )
     if resp.status_code == 402:
         logger.info("[outscraper] account has no credits — skipping %s", name)
-        return {"monthly_breakdown": {}, "total_reviews_fetched": 0}
+        return {"reviews_data": [], "monthly_breakdown": {}, "total_reviews_fetched": 0}
     resp.raise_for_status()
     raw = resp.json()
 
-    # Outscraper always returns async (status=Pending) for review requests.
-    # Poll until the task completes — typically 10-30 seconds.
+    # Outscraper returns async (status=Pending) for review requests.
+    # Poll until complete — typically 10-30 seconds.
     if raw.get("status") in ("Pending", None) or not raw.get("data"):
         raw = _poll_for_results(raw.get("id", ""), headers)
 
-    reviews = _extract_reviews(raw)
+    reviews          = _extract_reviews(raw)
     monthly_breakdown = _build_monthly_breakdown(reviews)
 
     payload = {
-        "monthly_breakdown": monthly_breakdown,
+        "reviews_data":          reviews,           # full raw review objects — source of truth
+        "monthly_breakdown":     monthly_breakdown, # convenience aggregate for sparkline chart
         "total_reviews_fetched": len(reviews),
-        "google_place_id": google_place_id,
-        "name": name,
-        "query": query,
+        "google_place_id":       google_place_id,
+        "name":                  name,
+        "query":                 query,
     }
 
     session.execute(
         text(
-            """
-            INSERT INTO raw_signals (restaurant_id, source, payload)
-            VALUES (:restaurant_id, :source, CAST(:payload AS jsonb))
-            """
+            "INSERT INTO raw_signals (restaurant_id, source, payload) "
+            "VALUES (:restaurant_id, :source, CAST(:payload AS jsonb))"
         ),
         {
             "restaurant_id": restaurant_id,
-            "source": "outscraper_reviews",
-            "payload": json.dumps(payload),
+            "source":        "outscraper_reviews",
+            "payload":       json.dumps(payload),
         },
     )
     session.commit()
@@ -141,9 +135,7 @@ def scrape_outscraper_reviews(
 
     logger.info(
         "Stored outscraper_reviews signal — name=%s months=%d total_reviews=%d",
-        name,
-        len(monthly_breakdown),
-        len(reviews),
+        name, len(monthly_breakdown), len(reviews),
     )
     return payload
 
@@ -183,57 +175,46 @@ def _extract_reviews(raw: dict) -> list[dict]:
     data = raw.get("data", [])
     if not data:
         return []
-
     first = data[0]
-
-    # Current format: data = [place_object] where place_object has reviews_data list.
     if isinstance(first, dict):
         return first.get("reviews_data", [])
-
-    # Legacy format: data = [[review, review, ...]] (flat list of review dicts).
     if isinstance(first, list):
         return first
-
     return []
 
 
 def _build_monthly_breakdown(reviews: list[dict]) -> dict[str, dict]:
     """Aggregate reviews into monthly buckets for the last 12 months.
 
-    Returns:
-        {
-          "YYYY-MM": {"count": N, "avg_rating": X.X},
-          ...
-        }
+    Stored alongside reviews_data as a convenience for the sparkline chart.
+    The scoring engine reads this directly rather than re-aggregating on every
+    score computation.
 
-    Only the trailing 12 months are included — older reviews don't improve
-    year-over-year accuracy but would inflate the monthly_breakdown payload.
+    Returns:
+        {"YYYY-MM": {"count": N, "avg_rating": X.X}, ...}
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=366)
-
-    monthly_counts: dict[str, int] = defaultdict(int)
-    monthly_ratings: dict[str, list] = defaultdict(list)
+    monthly_counts:  dict[str, int]   = defaultdict(int)
+    monthly_ratings: dict[str, list]  = defaultdict(list)
 
     for review in reviews:
         dt = _parse_review_timestamp(review)
         if dt is None or dt < cutoff:
             continue
-
         month_key = dt.strftime("%Y-%m")
         monthly_counts[month_key] += 1
-
         rating = review.get("review_rating")
         if isinstance(rating, (int, float)):
             monthly_ratings[month_key].append(float(rating))
 
-    result = {}
-    for month in sorted(monthly_counts.keys()):
-        ratings = monthly_ratings[month]
-        result[month] = {
-            "count": monthly_counts[month],
-            "avg_rating": round(sum(ratings) / len(ratings), 2) if ratings else None,
+    return {
+        month: {
+            "count":      monthly_counts[month],
+            "avg_rating": round(sum(monthly_ratings[month]) / len(monthly_ratings[month]), 2)
+                          if monthly_ratings[month] else None,
         }
-    return result
+        for month in sorted(monthly_counts.keys())
+    }
 
 
 def _parse_review_timestamp(review: dict):
@@ -244,7 +225,6 @@ def _parse_review_timestamp(review: dict):
             return datetime.fromtimestamp(float(ts), tz=timezone.utc)
         except (OSError, ValueError, OverflowError):
             pass
-
     # Observed format from Outscraper: "05/12/2026 17:40:48" (MM/DD/YYYY HH:MM:SS)
     dt_str = review.get("review_datetime_utc", "")
     for fmt in ("%m/%d/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
@@ -252,5 +232,4 @@ def _parse_review_timestamp(review: dict):
             return datetime.strptime(dt_str, fmt).replace(tzinfo=timezone.utc)
         except ValueError:
             pass
-
     return None

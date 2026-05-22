@@ -226,6 +226,7 @@ def scrape_place(place_id: str, restaurant_id: str, session: Session) -> dict:
 
     payload = {
         "result":      result,
+        "v1_raw":      v1_data,    # full unmodified API response — source of truth
         "api_version": "v1",       # track which API version produced this signal
         "place_id":    place_id,
     }
