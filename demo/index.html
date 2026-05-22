@@ -799,6 +799,11 @@
   }
 
   // ── Level 2: Factor rows ──────────────────────────────────────────────────
+  const FACTOR_TOOLTIPS = {
+    'tabc_expected_missing':       'Business type indicates alcohol service but no TABC license found — potential compliance risk',
+    'inspection_expected_missing': 'Food service establishment with a working inspection portal but no records found',
+  };
+
   function renderFactorRows(factors) {
     if (!factors || !factors.length)
       return '<div style="color:var(--muted);font-size:12px;padding:6px 0">Score factors will appear after the next scrape cycle.</div>';
@@ -806,7 +811,8 @@
       const icon  = f.impact === 'positive' ? '↑' : f.impact === 'negative' ? '↓' : '→';
       const cls   = f.impact === 'positive' ? 'positive' : f.impact === 'negative' ? 'negative' : 'neutral';
       const date  = f.date ? fmtShortDate(f.date) : '';
-      return `<div class="factor-row">
+      const tip   = f.flag && FACTOR_TOOLTIPS[f.flag] ? ` title="${FACTOR_TOOLTIPS[f.flag]}"` : '';
+      return `<div class="factor-row"${tip}>
         <span class="factor-impact ${cls}">${icon}</span>
         <span class="factor-label">${f.label}</span>
         <span class="factor-value">${f.value}</span>
@@ -887,7 +893,13 @@
                                  badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent ${s.taxDelinquencyYears}yr</span>`);
     else if (s.taxDelinquent)    badges.push(`<span class="warn-badge warn-badge-financial">⚠ Tax Delinquent</span>`);
     if (s.deliveryPlatformLoss)  badges.push(`<span class="warn-badge warn-badge-operational">⚠ Platform Delisted</span>`);
-    if (s.compositeRiskCap)      badges.push(`<span class="warn-badge warn-badge-composite">⚠ Composite Risk Flag</span>`);
+    if (s.compositeRiskCap)           badges.push(`<span class="warn-badge warn-badge-composite">⚠ Composite Risk Flag</span>`);
+    if (s.sanitationFlag)             badges.push(`<span class="warn-badge warn-badge-financial">⚠ Sanitation Risk</span>`);
+    if (s.ownerDisengaged)            badges.push(`<span class="warn-badge warn-badge-operational">⚠ Owner Disengaged</span>`);
+    if (s.bimodalDistribution)        badges.push(`<span class="warn-badge warn-badge-source">⚠ Polarized Reviews</span>`);
+    if (s.ownershipChangeFlag)        badges.push(`<span class="warn-badge warn-badge-review">⚠ Ownership Change Detected</span>`);
+    if (s.tabcExpectedMissing)        badges.push(`<span class="warn-badge warn-badge-operational">⚠ License Missing</span>`);
+    if (s.inspectionExpectedMissing)  badges.push(`<span class="warn-badge warn-badge-operational">⚠ Inspection Records Missing</span>`);
     return badges.length ? `<div class="warn-badges">${badges.join('')}</div>` : '';
   }
 
@@ -1247,6 +1259,55 @@
     }
     if (s.sourceDivergence) {
       rows.push(`<div class="suppl-row"><span class="suppl-key">Cross-source</span><span class="suppl-val recency-red">⚠ Google ≠ Foursquare (&gt;0.5★ gap)</span></div>`);
+    }
+
+    // Phase 11: rating distribution bar (recent 90d vs lifetime)
+    const sf = s.scoreFactors || {};
+    const rtFactor = (sf.ratingTrend || []).find(f => f.label && f.label.includes('1-star review rate'));
+    if (s.pct1StarRecent != null || s.pct5StarRecent != null) {
+      const p1 = s.pct1StarRecent ?? 0;
+      const p5 = s.pct5StarRecent ?? 0;
+      const p1c = p1 > 30 ? '#ef4444' : p1 > 15 ? '#f59e0b' : 'var(--muted)';
+      rows.push(`<div class="suppl-row" style="flex-wrap:wrap;gap:6px">
+        <span class="suppl-key">Rating dist (90d)</span>
+        <span class="suppl-val" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span style="color:#22c55e;font-weight:600">${p5.toFixed(0)}% ★5</span>
+          <span style="color:${p1c};font-weight:600">${p1.toFixed(0)}% ★1</span>
+          ${s.highNegativeRate ? '<span style="color:#ef4444;font-size:11px">⚠ High negative rate</span>' : ''}
+          ${s.bimodalDistribution ? '<span style="color:#f59e0b;font-size:11px">⚠ Polarized</span>' : ''}
+        </span>
+      </div>`);
+    }
+
+    // Phase 11: keyword flags chips
+    const kwFactors = (sf.ratingTrend || []).filter(f => f.signal === 'outscraper_reviews' && f.keywordFindings);
+    const kwFindings = kwFactors.length ? kwFactors[0].keywordFindings : null;
+    if (kwFindings && Object.keys(kwFindings).length > 0) {
+      const chipColors = {
+        sanitation_risk:          '#ef4444',
+        operational_instability:  '#ef4444',
+        ownership_change:         '#f97316',
+        quality_decline:          '#f97316',
+        financial_stress:         '#eab308',
+      };
+      const chips = Object.entries(kwFindings).map(([cat, data]) => {
+        const col   = chipColors[cat] || '#6b7280';
+        const label = cat.replace(/_/g, ' ');
+        const examples = (data.examples || []).join(', ');
+        const title = examples ? `title="${escHtml(examples)}"` : '';
+        return `<span class="kw-chip" style="background:${col}20;border:1px solid ${col};color:${col};border-radius:4px;padding:2px 6px;font-size:11px;cursor:default" ${title}>${label} ×${data.match_count}</span>`;
+      });
+      rows.push(`<div class="suppl-row" style="flex-wrap:wrap;gap:4px">
+        <span class="suppl-key">Keywords (60d)</span>
+        <span class="suppl-val" style="display:flex;gap:4px;flex-wrap:wrap">${chips.join('')}</span>
+      </div>`);
+    }
+
+    // Phase 11: response rate trend
+    if (s.responseRateRecent != null && s.responseRatePrior != null) {
+      const arrow = s.responseRateRecent < s.responseRatePrior ? '↓' : (s.responseRateRecent > s.responseRatePrior ? '↑' : '→');
+      const col   = s.ownerDisengaged ? '#ef4444' : (s.responseRateDeclining ? '#f59e0b' : 'var(--green)');
+      rows.push(`<div class="suppl-row"><span class="suppl-key">Owner responses</span><span class="suppl-val" style="color:${col}">${arrow} ${s.responseRatePrior}% → ${s.responseRateRecent}% (last 60d)</span></div>`);
     }
 
     return rows.length ? `<div class="suppl-panel">${rows.join('')}</div>` : '';

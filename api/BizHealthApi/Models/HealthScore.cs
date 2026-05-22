@@ -111,5 +111,75 @@ public class HealthScore
     [Column("composite_risk_cap")]
     public bool? CompositeRiskCap { get; set; }
 
+    // Phase 11: rating distribution
+    [Column("pct_5star_recent")]
+    public decimal? Pct5StarRecent { get; set; }
+
+    [Column("pct_1star_recent")]
+    public decimal? Pct1StarRecent { get; set; }
+
+    [Column("high_negative_rate")]
+    public bool? HighNegativeRate { get; set; }
+
+    [Column("negative_rate_rising")]
+    public bool? NegativeRateRising { get; set; }
+
+    [Column("bimodal_distribution")]
+    public bool? BimodalDistribution { get; set; }
+
+    // Phase 11: keyword flags
+    [Column("sanitation_flag")]
+    public bool? SanitationFlag { get; set; }
+
+    [Column("operational_instability_flag")]
+    public bool? OperationalInstabilityFlag { get; set; }
+
+    [Column("ownership_change_flag")]
+    public bool? OwnershipChangeFlag { get; set; }
+
+    [Column("quality_decline_flag")]
+    public bool? QualityDeclineFlag { get; set; }
+
+    [Column("financial_stress_flag")]
+    public bool? FinancialStressFlag { get; set; }
+
+    [Column("keyword_findings", TypeName = "jsonb")]
+    public string? KeywordFindings { get; set; }
+
+    // Phase 11: response rate trend
+    [Column("response_rate_declining")]
+    public bool? ResponseRateDeclining { get; set; }
+
+    [Column("owner_disengaged")]
+    public bool? OwnerDisengaged { get; set; }
+
+    [Column("response_rate_recent")]
+    public int? ResponseRateRecent { get; set; }
+
+    [Column("response_rate_prior")]
+    public int? ResponseRatePrior { get; set; }
+
+    // Signal confidence
+    [Column("tabc_confidence")]
+    public string? TabcConfidence { get; set; }
+
+    [Column("tabc_confidence_reason")]
+    public string? TabcConfidenceReason { get; set; }
+
+    [Column("inspection_confidence")]
+    public string? InspectionConfidence { get; set; }
+
+    [Column("inspection_confidence_reason")]
+    public string? InspectionConfidenceReason { get; set; }
+
+    [Column("tabc_expected_missing")]
+    public bool? TabcExpectedMissing { get; set; }
+
+    [Column("inspection_expected_missing")]
+    public bool? InspectionExpectedMissing { get; set; }
+
+    [Column("inspection_data_unavailable")]
+    public bool? InspectionDataUnavailable { get; set; }
+
     public Restaurant? Restaurant { get; set; }
 }

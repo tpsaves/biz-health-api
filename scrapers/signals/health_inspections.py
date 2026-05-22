@@ -24,6 +24,8 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from scoring.signal_confidence import classify_inspection_confidence, get_place_types
+
 logger = logging.getLogger(__name__)
 
 # Dallas Open Data — historical inspections (Oct 2016 – Jan 2024, dataset dri5-wcct).
@@ -124,14 +126,22 @@ def scrape_inspections(name: str, city: str, restaurant_id: str, session: Sessio
         )
         records = []
 
-    if not records:
-        return _write_no_data(name, city, authority, restaurant_id, session)
+    place_types = get_place_types(restaurant_id, session)
 
+    if not records:
+        return _write_no_data(name, city, authority, restaurant_id, session, place_types)
+
+    confidence, confidence_reason, city_has_portal = classify_inspection_confidence(
+        city, place_types, records
+    )
     payload = {
         "records": records,
         "name_query": name,
         "city": city,
         "health_authority": authority,
+        "inspection_confidence":        confidence,
+        "inspection_confidence_reason": confidence_reason,
+        "city_has_portal":              city_has_portal,
     }
     _write_signal(restaurant_id, "health_inspections", payload, session)
 
@@ -281,17 +291,26 @@ def _write_no_data(
     authority: str,
     restaurant_id: str,
     session: Session,
+    place_types: list[str] | None = None,
 ) -> dict:
     """Write a no_inspection_data placeholder so the absence is explicit in the DB."""
+    if place_types is None:
+        place_types = get_place_types(restaurant_id, session)
+    confidence, confidence_reason, city_has_portal = classify_inspection_confidence(
+        city, place_types, []
+    )
     payload = {
         "records": [],
         "name_query": name,
         "city": city,
         "health_authority": authority,
         "status": "no_inspection_data",
+        "inspection_confidence":        confidence,
+        "inspection_confidence_reason": confidence_reason,
+        "city_has_portal":              city_has_portal,
     }
     _write_signal(restaurant_id, "health_inspections", payload, session)
-    logger.info("no_inspection_data — name=%r city=%r authority=%r", name, city, authority)
+    logger.info("no_inspection_data — name=%r city=%r authority=%r confidence=%r", name, city, authority, confidence)
     return payload
 
 

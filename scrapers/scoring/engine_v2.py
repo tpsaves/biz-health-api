@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from scoring import seasonality
 from scoring.keyword_analyzer import analyze_keywords, compute_rating_distribution, compute_response_rates
+from scoring.signal_confidence import classify_tabc_confidence, classify_inspection_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     google_scraped_date: Optional[str] = None
     velocity_metrics: dict = {}
 
+    place_types: list[str] = []
     if google_row:
         result = google_row.payload.get("result", {})
         google_review_count = result.get("user_ratings_total") or 0
@@ -92,6 +94,7 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         if google_row.scraped_at:
             google_scraped_date = google_row.scraped_at.strftime("%Y-%m-%d")
         velocity_metrics = google_row.payload.get("velocity_metrics", {})
+        place_types = (google_row.payload.get("v1_raw") or {}).get("types", [])
 
     # ── review_velocity_score ──────────────────────────────────────────────────
     review_velocity_score = min(100, int(google_review_count / _MAX_REVIEW_COUNT * 100))
@@ -407,8 +410,10 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     inspection_records_raw: list = []
     insp_scraped_date: Optional[str] = None
 
+    insp_city: str = ""
     if inspection_row:
         inspection_records_raw = inspection_row.payload.get("records", [])
+        insp_city = inspection_row.payload.get("city", "")
         if inspection_row.scraped_at:
             insp_scraped_date = inspection_row.scraped_at.strftime("%Y-%m-%d")
         if inspection_records_raw:
@@ -418,9 +423,14 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             except (ValueError, TypeError):
                 health_component = 0
 
+    insp_confidence, insp_confidence_reason, insp_city_has_portal = classify_inspection_confidence(
+        insp_city, place_types, inspection_records_raw
+    )
+
     tabc_component: int = 0
     tabc_record: Optional[dict] = None
     tabc_scraped_date: Optional[str] = None
+    tabc_records: list = []
 
     if tabc_row:
         tabc_records = tabc_row.payload.get("records", [])
@@ -430,6 +440,8 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             tabc_record = tabc_records[0]
             license_type = tabc_record.get("aimslicensetype", "")
             tabc_component = _LICENSE_TYPE_SCORES.get(license_type, _DEFAULT_LICENSE_SCORE)
+
+    tabc_confidence, tabc_confidence_reason = classify_tabc_confidence(place_types, tabc_records)
 
     hours_component: int = 0
     hours_payload: Optional[dict] = None
@@ -550,6 +562,21 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             operational_score    = max(0, operational_score - 10)
         # partial:  no change
         # unknown:  no adjustment (platform_unavailable)
+
+    # ── Signal confidence adjustments ─────────────────────────────────────────
+    tabc_expected_missing       = False
+    inspection_expected_missing = False
+    inspection_data_unavailable = False
+
+    if tabc_confidence == 'expected_not_found':
+        tabc_expected_missing = True
+        operational_score = max(0, operational_score - 15)
+
+    if insp_confidence == 'expected_not_found':
+        inspection_expected_missing = True
+        operational_score = max(0, operational_score - 10)
+    elif insp_confidence == 'unknown' and insp_city_has_portal:
+        inspection_data_unavailable = True
 
     # ── overall_score ──────────────────────────────────────────────────────────
     overall_score = int(
@@ -784,6 +811,27 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
 
     operational_factors: list[dict] = []
 
+    if not inspection_records_raw:
+        if insp_confidence == 'expected_not_found':
+            operational_factors.append({
+                "signal": "health_inspection",
+                "label": "Health inspection",
+                "value": "Expected — not found. Food service establishment with working portal but no records.",
+                "impact": "negative",
+                "weight": "high",
+                "flag": "inspection_expected_missing",
+            })
+        elif insp_confidence == 'unknown' and insp_city_has_portal:
+            operational_factors.append({
+                "signal": "health_inspection",
+                "label": "Health inspection",
+                "value": "No data — portal available but no records matched",
+                "impact": "neutral",
+                "weight": "none",
+                "flag": None,
+            })
+        # else: no portal city or truly unknown — no factor added (no data to show)
+
     if inspection_records_raw:
         latest_insp = inspection_records_raw[0]
         _raw_insp   = latest_insp.get("score", 0) or 0
@@ -843,14 +891,32 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "impact": "positive",
             "weight": "high",
         })
-    else:
+    elif tabc_confidence == 'expected_not_found':
         operational_factors.append({
-            "signal": "tabc_license_status",
-            "label": "TABC license status",
-            "value": "No record found",
-            "date": "",
+            "signal": "tabc_license",
+            "label": "TABC license",
+            "value": "Expected but not found — bar/restaurant with no active liquor license on record",
             "impact": "negative",
             "weight": "high",
+            "flag": "tabc_expected_missing",
+        })
+    elif tabc_confidence == 'not_applicable':
+        operational_factors.append({
+            "signal": "tabc_license",
+            "label": "TABC license",
+            "value": "N/A — business type does not require a liquor license",
+            "impact": "neutral",
+            "weight": "none",
+            "flag": None,
+        })
+    else:
+        operational_factors.append({
+            "signal": "tabc_license",
+            "label": "TABC license",
+            "value": "No record found — unable to determine if license required",
+            "impact": "neutral",
+            "weight": "none",
+            "flag": None,
         })
 
     if hours_payload is not None:
@@ -1056,7 +1122,11 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 ownership_change_flag, quality_decline_flag,
                 financial_stress_flag, keyword_findings,
                 response_rate_declining, owner_disengaged,
-                response_rate_recent,  response_rate_prior
+                response_rate_recent,  response_rate_prior,
+                tabc_confidence,       tabc_confidence_reason,
+                inspection_confidence, inspection_confidence_reason,
+                tabc_expected_missing, inspection_expected_missing,
+                inspection_data_unavailable
             ) VALUES (
                 :restaurant_id,
                 :review_velocity_score, :rating_trend_score,
@@ -1082,7 +1152,11 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 :ownership_change_flag, :quality_decline_flag,
                 :financial_stress_flag, CAST(:keyword_findings AS jsonb),
                 :response_rate_declining, :owner_disengaged,
-                :response_rate_recent, :response_rate_prior
+                :response_rate_recent, :response_rate_prior,
+                :tabc_confidence,      :tabc_confidence_reason,
+                :inspection_confidence, :inspection_confidence_reason,
+                :tabc_expected_missing, :inspection_expected_missing,
+                :inspection_data_unavailable
             )
             """
         ),
@@ -1133,6 +1207,13 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "owner_disengaged":               owner_disengaged,
             "response_rate_recent":           response_rate_recent_val,
             "response_rate_prior":            response_rate_prior_val,
+            "tabc_confidence":               tabc_confidence,
+            "tabc_confidence_reason":        tabc_confidence_reason,
+            "inspection_confidence":         insp_confidence,
+            "inspection_confidence_reason":  insp_confidence_reason,
+            "tabc_expected_missing":         tabc_expected_missing,
+            "inspection_expected_missing":   inspection_expected_missing,
+            "inspection_data_unavailable":   inspection_data_unavailable,
         },
     )
     session.commit()
@@ -1196,6 +1277,14 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         "owner_disengaged":               owner_disengaged,
         "response_rate_recent":           response_rate_recent_val,
         "response_rate_prior":            response_rate_prior_val,
+        # Signal confidence
+        "tabc_confidence":               tabc_confidence,
+        "tabc_confidence_reason":        tabc_confidence_reason,
+        "inspection_confidence":         insp_confidence,
+        "inspection_confidence_reason":  insp_confidence_reason,
+        "tabc_expected_missing":         tabc_expected_missing,
+        "inspection_expected_missing":   inspection_expected_missing,
+        "inspection_data_unavailable":   inspection_data_unavailable,
     }
     logger.info(
         "v2 scored restaurant_id=%s overall=%s financial=%s sba_default=%s "

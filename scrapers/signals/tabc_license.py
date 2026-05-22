@@ -18,6 +18,8 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from scoring.signal_confidence import classify_tabc_confidence, get_place_types
+
 logger = logging.getLogger(__name__)
 
 # Texas Open Data Portal — TABC Licenses (dataset kguh-7q9z).
@@ -90,11 +92,17 @@ def scrape_license(trade_name: str, city: str, restaurant_id: str, session: Sess
 
     # No license records is a meaningful signal, not an error.
     # Storing an empty list lets the scoring engine distinguish no-license from no-scrape.
+    place_types = get_place_types(restaurant_id, session)
+    confidence, confidence_reason = classify_tabc_confidence(place_types, records)
+
     payload = {
         "records": records,
         "trade_name_query": trade_name,
         "city_query": city,
         "city_matched": records[0].get("city") if records else None,
+        "tabc_confidence":        confidence,
+        "tabc_confidence_reason": confidence_reason,
+        "place_types_checked":    place_types,
     }
 
     session.execute(

@@ -1,23 +1,14 @@
-"""Phase 9 integration test: scoring engine with delivery platform signals.
+"""Phase 11 integration test: rating distribution, keyword flags, response rate trend.
 
-Run inside the scrapers container:
+Re-scores all active pipeline restaurants and prints rating_trend_score before/after
+with any Phase 11 flags triggered.
+
+Run inside Docker:
     docker-compose exec scrapers python scoring/test_engine_v7.py
-
-Confirms:
-  - operational_score adjusts correctly based on delivery platform listing status
-  - doordash_listed, ubereats_listed, delivery_status populated in health_scores
-  - delivery_platform_loss flag triggers correctly when a restaurant drops off a platform
-  - DoorDash and Uber Eats status printed for each restaurant
-
-Python note for C# developers:
-  sys.path.insert(0, ...) makes the parent directory importable — equivalent to
-  adding a project reference in C# .csproj so sibling assemblies resolve correctly.
-  In Python there is no project file; you manage the module search path manually.
 """
 
 import os
 import sys
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from dotenv import load_dotenv
@@ -38,142 +29,132 @@ def _db_url() -> str:
     return f"postgresql://{user}:{password}@{host}:{port}/{db}"
 
 
-def _banner(msg: str) -> None:
-    print("\n" + "=" * 60)
-    print(msg)
-    print("=" * 60)
-
-
-def _platform_status_line(label: str, listed) -> str:
-    if listed is True:
-        return f"  {label:12}: Listed (active)"
-    elif listed is False:
-        return f"  {label:12}: Not listed"
-    else:
-        return f"  {label:12}: Unknown (platform unavailable)"
-
-
-def _confirm_delivery_columns(session: Session, restaurant_id: str) -> dict:
-    """Read the latest health_scores row and return Phase 9 delivery fields."""
-    row = session.execute(
-        text(
-            """
-            SELECT doordash_listed, ubereats_listed,
-                   delivery_platform_count, delivery_status,
-                   delivery_platform_loss, operational_score
-            FROM health_scores
-            WHERE restaurant_id = :rid
-            ORDER BY scored_at DESC
-            LIMIT 1
-            """
-        ),
-        {"rid": restaurant_id},
-    ).one_or_none()
-
-    # row._mapping gives a dict-like view of the row — equivalent to reading
-    # individual column properties from an EF Core entity in C#.
-    return dict(row._mapping) if row else {}
-
-
-def _delivery_signal_exists(session: Session, restaurant_id: str) -> bool:
-    """Check whether a delivery_platforms raw_signal exists for this restaurant."""
-    row = session.execute(
-        text(
-            """
-            SELECT 1 FROM raw_signals
-            WHERE restaurant_id = :rid AND source = 'delivery_platforms'
-            LIMIT 1
-            """
-        ),
-        {"rid": restaurant_id},
-    ).one_or_none()
-    return row is not None
-
-
 def main() -> None:
     engine = create_engine(_db_url())
 
     with Session(engine) as session:
         rows = session.execute(
-            text("SELECT id, name FROM restaurants ORDER BY name")
+            text(
+                "SELECT id, name FROM restaurants "
+                "WHERE google_place_id IS NOT NULL ORDER BY name"
+            )
         ).fetchall()
 
     if not rows:
-        print("No restaurants found. Run bulk onboarding first.")
+        print("No restaurants found.")
         sys.exit(1)
 
-    print(f"\nFound {len(rows)} restaurant(s). Running Phase 9 scoring engine...\n")
+    print(f"\nRe-scoring {len(rows)} restaurants for Phase 11 signals...\n")
+    print(f"  {'Name':<38} {'RT Before':>9} {'RT After':>9}  Flags")
+    print("  " + "-" * 82)
 
-    passed = 0
-    failed = 0
+    any_flagged     = False
+    pecan_result    = None
+    backyard_result = None
 
     for restaurant_id, name in rows:
         rid = str(restaurant_id)
-        _banner(name)
 
-        try:
-            with Session(engine) as session:
+        with Session(engine) as session:
+            prev = session.execute(
+                text(
+                    "SELECT rating_trend_score FROM health_scores "
+                    "WHERE restaurant_id = :rid ORDER BY scored_at DESC LIMIT 1"
+                ),
+                {"rid": rid},
+            ).one_or_none()
+            rt_before = prev.rating_trend_score if prev else "—"
+
+            try:
                 scores = compute_scores_v2(rid, session)
+            except Exception as exc:
+                print(f"  {name:<38}  ERROR: {exc}")
+                continue
 
-            print(f"  overall_score           : {scores['overall_score']}")
-            print(f"  review_velocity_score   : {scores['review_velocity_score']}")
-            print(f"  rating_trend_score      : {scores['rating_trend_score']}")
-            print(f"  operational_score       : {scores['operational_score']}")
-            print(f"  financial_risk_score    : {scores['financial_risk_score']}")
+        rt_after = scores["rating_trend_score"]
+        flags = []
+        if scores.get("high_negative_rate"):            flags.append("high_neg_rate")
+        if scores.get("negative_rate_rising"):          flags.append("neg_rate_rising")
+        if scores.get("bimodal_distribution"):          flags.append("bimodal")
+        if scores.get("sanitation_flag"):               flags.append("SANITATION")
+        if scores.get("operational_instability_flag"):  flags.append("op_instability")
+        if scores.get("ownership_change_flag"):         flags.append("ownership_change")
+        if scores.get("quality_decline_flag"):          flags.append("quality_decline")
+        if scores.get("financial_stress_flag"):         flags.append("financial_stress")
+        if scores.get("owner_disengaged"):              flags.append("OWNER_DISENGAGED")
+        if scores.get("response_rate_declining"):       flags.append("resp_declining")
+        if scores.get("tabc_expected_missing"):         flags.append("TABC_MISSING")
+        if scores.get("inspection_expected_missing"):   flags.append("INSP_MISSING")
 
-            print()
-            print(_platform_status_line("DoorDash",  scores.get("doordash_listed")))
-            print(_platform_status_line("Uber Eats", scores.get("ubereats_listed")))
-            print(f"  delivery_status         : {scores.get('delivery_status', 'unknown')}")
-            print(f"  delivery_platform_count : {scores.get('delivery_platform_count', '—')}")
+        if flags:
+            any_flagged = True
 
-            if scores.get("delivery_platform_loss"):
-                print("\n  *** DELIVERY PLATFORM LOSS ACTIVE ***")
-                print("  Restaurant was listed but is now offline on one or more platforms.")
+        print(f"  {name:<38} {str(rt_before):>9} {str(rt_after):>9}  {', '.join(flags)}")
 
-            # Verify new columns landed in health_scores.
-            with Session(engine) as session:
-                db_row = _confirm_delivery_columns(session, rid)
-                signal_exists = _delivery_signal_exists(session, rid)
+        if "pecan lodge" in name.lower():
+            pecan_result = (rt_before, rt_after, flags, scores)
+        if "backyard" in name.lower():
+            backyard_result = (name, flags, scores)
 
-            if db_row:
-                print(f"\n  DB doordash_listed      : {db_row.get('doordash_listed')}")
-                print(f"  DB ubereats_listed      : {db_row.get('ubereats_listed')}")
-                print(f"  DB delivery_status      : {db_row.get('delivery_status')}")
-                print(f"  DB delivery_platform_count: {db_row.get('delivery_platform_count')}")
-                print(f"  DB delivery_platform_loss : {db_row.get('delivery_platform_loss')}")
-                print(f"  DB operational_score    : {db_row.get('operational_score')}")
-                print(f"  delivery_platforms signal in raw_signals: {'yes' if signal_exists else 'no (run test_delivery_platforms.py first)'}")
-                print("  [OK] Phase 9 columns present in health_scores")
-                passed += 1
-            else:
-                print("  [FAIL] No health_scores row found after scoring")
-                failed += 1
-
-        except Exception as exc:
-            import traceback
-            print(f"  [FAIL] {exc}")
-            traceback.print_exc()
-            failed += 1
-
-    _banner(f"Results: {passed} passed / {failed} failed")
     print()
-    if passed == len(rows):
-        print("All restaurants scored with Phase 9 delivery platform signals.")
 
-    print(
-        "\nWeight distribution (unchanged from Phase 8):\n"
-        "  review_velocity_score : 20%\n"
-        "  rating_trend_score    : 30%\n"
-        "  operational_score     : 30%  ← delivery platform adjustments apply here\n"
-        "  financial_risk_score  : 20%\n"
-        "\nDelivery platform operational_score adjustments:\n"
-        "  Listed on both platforms      : +5\n"
-        "  Listed on one platform only   : no change\n"
-        "  Never listed (conclusive)     : -10\n"
-        "  Was listed, now offline       : -20  (sets delivery_platform_loss=True)\n"
-        "  Platform data unavailable     : no adjustment"
-    )
+    # Summary checks
+    if pecan_result:
+        rt_b, rt_a, pl_flags, pl_scores = pecan_result
+        dangerous = {"SANITATION", "OWNER_DISENGAGED"}
+        print(f"[CHECK] Pecan Lodge rating_trend: {rt_b} → {rt_a}, flags={pl_flags or 'none'}")
+        pl_dangerous = [f for f in pl_flags if f in dangerous]
+        if pl_dangerous:
+            print(f"  NOTE: {pl_dangerous} flagged — review manually for false positive")
+        else:
+            print("  Pecan Lodge: no high-severity flags (expected for healthy restaurant)")
+    else:
+        print("[CHECK] Pecan Lodge not in active restaurant list")
+
+    if any_flagged:
+        print("[CHECK] At least one restaurant triggered a Phase 11 flag — OK")
+    else:
+        print("[CHECK] No Phase 11 flags triggered — may be expected if Outscraper data is sparse")
+
+    # Signal confidence checks
+    if backyard_result:
+        b_name, b_flags, b_scores = backyard_result
+        tabc_conf = b_scores.get("tabc_confidence")
+        tabc_miss = b_scores.get("tabc_expected_missing")
+        print(f"[CHECK] Backyard Dallas tabc_confidence={tabc_conf!r} tabc_expected_missing={tabc_miss}")
+        if tabc_miss:
+            print("  PASS: Backyard Dallas correctly flagged tabc_expected_missing (bar with no TABC)")
+        else:
+            print("  NOTE: tabc_expected_missing=False — place_types may not include 'bar' in stored signal")
+    else:
+        print("[CHECK] Backyard Dallas not in restaurant list")
+
+    # Verify new columns are written to DB
+    with Session(engine) as session:
+        recent_count = session.execute(
+            text(
+                "SELECT COUNT(*) FROM health_scores "
+                "WHERE scored_at > NOW() - INTERVAL '10 minutes'"
+            )
+        ).scalar()
+        with_dist = session.execute(
+            text(
+                "SELECT COUNT(*) FROM health_scores "
+                "WHERE scored_at > NOW() - INTERVAL '10 minutes' "
+                "  AND pct_1star_recent IS NOT NULL"
+            )
+        ).scalar()
+        with_keywords = session.execute(
+            text(
+                "SELECT COUNT(*) FROM health_scores "
+                "WHERE scored_at > NOW() - INTERVAL '10 minutes' "
+                "  AND keyword_findings IS NOT NULL"
+            )
+        ).scalar()
+
+    print(f"[CHECK] Rows written this run: {recent_count}")
+    print(f"[CHECK] Rows with rating distribution: {with_dist}")
+    print(f"[CHECK] Rows with keyword_findings: {with_keywords}")
     print()
 
 
