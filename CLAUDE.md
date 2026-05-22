@@ -36,8 +36,8 @@ who need to assess the risk of small restaurant businesses before extending cred
       health_inspections.py    # All 10 DFW cities routed to correct health authority
       tabc_license.py          # Texas Open Data Portal — covers all TX cities
       hours_monitor.py
-      outscraper_reviews.py    # Primary review recency source — biweekly 1st/15th
-      outscraper_quota.py      # Monthly usage cap enforcement — 10,000 records/month
+      outscraper_reviews.py    # Primary review source — biweekly 1st/15th, stores FULL reviews_data
+      outscraper_quota.py      # Monthly usage cap — 10,000 records/month
       sba_loans.py
       property_tax.py
       delivery_platforms.py    # platform_unavailable in Docker (bot detection)
@@ -45,6 +45,7 @@ who need to assess the risk of small restaurant businesses before extending cred
       engine.py
       engine_v2.py             # Current active engine with composite risk cap
       seasonality.py
+      keyword_analyzer.py      # 5-category keyword detection from review text
     /onboarding
       restaurant_lookup.py
       bulk_onboard.py
@@ -146,6 +147,23 @@ delivery_platform_loss    boolean,
 -- Composite risk cap (Phase 10)
 composite_risk_cap        boolean,
 
+-- Enhanced rating trend (Phase 11)
+pct_5star_recent          decimal,
+pct_1star_recent          decimal,
+high_negative_rate        boolean,
+negative_rate_rising      boolean,
+bimodal_distribution      boolean,
+sanitation_flag           boolean,
+operational_instability_flag boolean,
+ownership_change_flag     boolean,
+quality_decline_flag      boolean,
+financial_stress_flag     boolean,
+keyword_findings          JSONB,
+response_rate_declining   boolean,
+owner_disengaged          boolean,
+response_rate_recent      int,
+response_rate_prior       int,
+
 -- Score factors
 score_factors             JSONB,
 
@@ -224,6 +242,13 @@ insufficient_data never triggers a red warning badge in the demo UI.
 
 ## API Service (.NET)
 
+### Conventions
+- .NET 9 Web API with EF Core
+- PascalCase classes, camelCase JSON output
+- Return ProblemDetails for error responses
+- All endpoints versioned under /api/v1/
+- Connection strings from environment variables
+
 ### Key Endpoints
 - GET /health
 - GET /api/v1/restaurants — paginated list with latest overall_score
@@ -248,12 +273,56 @@ insufficient_data never triggers a red warning badge in the demo UI.
 
 ## Scraper Service (Python)
 
+### Conventions
+- Follow PEP8
+- Each scraper is a separate module under /scrapers/signals/
+- All scrapers write raw response to raw_signals before processing
+- APScheduler for scheduling, httpx for HTTP, python-dotenv for env vars
+- Max retries: 3, timeout: 60 seconds per restaurant per scraper
+- Failed jobs write error record to raw_signals with source {source}_error
+- Add comments explaining Python patterns that differ from C#
+- thefuzz library used for fuzzy name matching
+
+---
+
+### ⚠️ DATA STORAGE POLICY — NON-NEGOTIABLE
+
+Raw data paid for or fetched from any external source MUST be stored in full in raw_signals.
+Aggregations are computed ON TOP of raw data, never INSTEAD of it.
+
+**ALWAYS store in raw_signals payload:**
+- The complete API response or fetched data exactly as received
+- Every field returned by the source regardless of whether it is currently used
+- Individual records (reviews, inspections, loans) as arrays — never discard elements
+
+**THEN compute and store aggregations alongside the raw data:**
+- Monthly breakdowns, averages, trend metrics, keyword findings
+- Aggregations go in the same payload as additional keys
+- Aggregations can always be recomputed — raw data that is discarded is gone forever
+
+**NEVER:**
+- Store only aggregated output and discard the source records
+- Filter or truncate API responses before storing
+- Decide at scrape time what fields "will be needed" — store everything
+- Optimize payload size at the expense of completeness
+
+Storage cost is negligible. Re-fetching API data costs money and time.
+Every scraper must follow this policy without exception.
+
+**Background:** In Phase 2 the Outscraper scraper was incorrectly built to store only
+monthly_breakdown aggregations and discard the raw reviews_data array. This meant 46,488
+paid reviews were lost and keyword analysis, rating distribution, and response rate signals
+could not be backfilled without re-fetching at additional cost. Fixed in Phase 11 —
+outscraper_reviews.py now stores the full reviews_data array alongside all aggregations.
+
+---
+
 ### Signal Sources
 | Signal | Weight | Source | Key Required | Notes |
 |---|---|---|---|---|
 | Google review velocity | High | Google Places API v1 | Yes | 5 reviews max, Outscraper is primary |
 | Google rating trend | High | Google Places API v1 | Yes | |
-| Outscraper reviews | High | Outscraper | Yes | Primary source, 46 reviews/restaurant |
+| Outscraper reviews | High | Outscraper | Yes | Full reviews_data stored, 46 reviews/restaurant |
 | Foursquare rating | Medium | Foursquare Places API | Yes (fsq3...) | Inactive |
 | Health inspections | High | See city routing table | No | |
 | TABC license | High | Texas Open Data Portal | No | All TX cities |
@@ -287,22 +356,35 @@ insufficient_data never triggers a red warning badge in the demo UI.
 | Denton | Denton CAD (dentoncad.com) |
 
 ### Outscraper Configuration
-- Reviews per restaurant: 46
+- Reviews per restaurant: 46 (full reviews_data array stored)
 - Schedule: biweekly — 1st and 15th of month at 1:00 AM UTC
-- Monthly projected usage: 107 × 46 × 2 = 9,844 records
-- Monthly projected cost: ~$29.53
+- Monthly projected usage: 94 × 46 × 2 = 8,648 records
+- Monthly projected cost: ~$25.94
 - Hard cap: 10,000 records/month enforced via outscraper_quota.py
-- Quota exhausted behavior: skip scrape, log outscraper_quota_exceeded to raw_signals
+- Quota exhausted: skip scrape, log outscraper_quota_exceeded to raw_signals
 - Partial quota: reduce reviewsLimit to remaining records rather than skipping
+- Payload includes: reviews_data (full), monthly_breakdown
+- rating_distribution, keyword_findings, response_rate_recent/prior are
+  computed at score time by engine_v2.py — NOT stored in the scraper payload
 
 ### Google Places API Limitation
 Returns maximum 5 reviews, not date-sorted. rankPreference: NEWEST not supported on
 details endpoint. Reviews sorted internally by _review_dt(). Outscraper is primary source.
 
 ### Review Data Priority
-**Sparkline and velocity**: Outscraper monthly_breakdown preferred, Google Places fallback
-**Recency (days_since_last_review)**: minimum of Outscraper and Google Places timestamps
-**Review count**: Outscraper total_reviews_fetched when Google returns 0
+- Sparkline and velocity: Outscraper monthly_breakdown preferred, Google Places fallback
+- Recency (days_since_last_review): minimum of Outscraper and Google Places timestamps
+- Review count: Outscraper total_reviews_fetched when Google returns 0
+- Keyword analysis: Outscraper reviews_data (full text required)
+- Rating distribution: Outscraper reviews_data (individual ratings required)
+- Response rate: Outscraper owner_answer field
+
+### Keyword Analysis Categories (keyword_analyzer.py)
+- operational_instability: closed early, not open, inconsistent hours
+- ownership_change: new owner, new management, under new ownership
+- sanitation_risk: health code, roaches, cockroach, dirty, unsanitary
+- quality_decline: not what it used to be, gone downhill, used to be better
+- financial_stress: prices went up, portion smaller, raised prices
 
 ### Seasonality Adjustment (seasonality.py)
 - January: 0.80, February: 0.90, March: 1.05, April: 1.10, May: 1.10
@@ -334,24 +416,25 @@ restaurant_classifier.py verifies businesses before onboarding:
 ### Current Status (May 2026)
 - **Closed restaurant dataset**: 72 verified closed DFW restaurants
 - **Retrospective backtest**: 9 restaurants scored at T-90 and T-180
-- **Prospective cohort**: 107 verified DFW restaurants (148 non-restaurants removed)
+- **Total restaurants**: 94 verified DFW restaurants
+- **Prospective cohort**: 62 restaurants in backtest_cohort (prospective)
 - **90-day outcomes due**: August 14, 2026
 - **180-day outcomes due**: November 12, 2026
 
 ### Prospective Cohort Distribution
 | Band | Count |
 |---|---|
-| Low (80-100) | 7 |
-| Moderate (60-79) | 47 |
-| Elevated (40-59) | 51 |
-| High (0-39) | 2 |
-| **Total** | **107** |
+| Low (80-100) | 11 |
+| Moderate (60-79) | 34 |
+| Elevated (40-59) | 16 |
+| High (0-39) | 1 |
+| **Total** | **62** |
 
 ### Model Performance (Retrospective, n=9)
 - **Precision**: 100%
 - **Recall**: 100% (after composite risk cap)
 - **AUC-ROC**: null — requires resolved prospective outcomes
-- Sample size is preliminary — grows as prospective cohort resolves in Aug/Nov 2026
+- Sample size is preliminary — grows as prospective cohort resolves Aug/Nov 2026
 
 ### Composite Risk Cap
 Finding: strong rating_trend was masking simultaneous weakness in operational and velocity.
@@ -360,7 +443,7 @@ Recall improved from 77.8% to 100% after cap was applied.
 
 ### Customer Pitch Summary
 "We backtested against 72 closed DFW restaurants. Our model correctly flagged 100% of
-closures before they happened with zero false positives. We have 107 verified DFW
+closures before they happened with zero false positives. We have 62 verified DFW
 restaurants in our prospective cohort — 90-day outcome data arrives August 2026."
 
 ---
@@ -370,26 +453,53 @@ restaurants in our prospective cohort — 90-day outcome data arrives August 202
 - Served via nginx — must use http://localhost:3000, NOT file://
 - Calls .NET API at http://localhost:8080
 - Search: Restaurant Name (required), Address or Zip (required), City (optional dropdown)
+- Supported cities: Dallas, Fort Worth, Arlington, Plano, Frisco, McKinney, Denton,
+  Irving, Garland, Grand Prairie
 
-### Features
-- Four component score bars: Review Velocity (20%), Rating Trend (30%), Operational (30%), Financial Risk (20%)
-- Three level score display: summary, signal breakdown, raw evidence
-- Dual line year-over-year review chart (current year solid blue, prior year dashed gray)
-- Hover crosshair with tooltip showing both years, YoY%, seasonally adjusted %
-- YoY summary line below chart (green/red)
-- Recently scored list — clickable, auto-populates score section, active highlight state
-- Side-by-side comparison of 2 restaurants with difference highlighting
-- Disambiguation list for multiple matches
-- Plain English risk recommendation per risk band
-- Backtesting tab with accuracy summary and cohort status
-- Admin footer: Outscraper usage meter with projected monthly cost
+### Four Component Score Bars
+- Review Velocity (20%)
+- Rating Trend (30%)
+- Operational Health (30%)
+- Financial Risk (20%)
+
+### Three Level Score Display
+- Level 1: overall score, four component bars, color risk indicator, plain English recommendation
+- Level 2: expandable signal breakdown per component with impact indicators and warning badges
+- Level 3: raw evidence — inspection records, TABC details, Google/Outscraper data
+
+### Review Trend Visualization
+- Dual line year-over-year chart (SVG)
+- Current year: solid blue line with filled area
+- Prior year: dashed gray line
+- X axis: Jan-Dec with 3-character abbreviations
+- Hover crosshair: tooltip showing both years, YoY%, seasonally adjusted %
+- YoY summary line: average change, green/red colored
+- Seasonal adjustment note below chart
+
+### Rating Trend Drill-Down (Level 2)
+- Rating distribution stacked bar: last 90 days vs lifetime side by side
+- Keyword flags: colored chips (red=sanitation/instability, orange=ownership/quality, yellow=financial)
+- Hover tooltip on each chip showing example phrases found
+- Owner engagement row: response rate recent vs prior with trend arrow
 
 ### Warning Badges
 - review_gap_alert, one_star_spike, rating_deterioration, source_divergence
 - sba_default, repeated_sba_borrowing, tax_delinquent
 - delivery_platform_loss
 - composite_risk_cap (orange — "Composite Risk Flag")
+- sanitation_flag (red — "Sanitation Risk")
+- owner_disengaged (orange — "Owner Disengaged")
+- bimodal_distribution (orange — "Polarized Reviews")
+- ownership_change_flag (yellow — "Ownership Change Detected")
 - Never shown for insufficient_data
+
+### Features
+- Recently scored list — clickable, auto-populates score section, active highlight state
+- Side-by-side comparison of 2 restaurants with difference highlighting
+- Disambiguation list for multiple matches
+- Plain English risk recommendation per risk band
+- Backtesting tab with accuracy summary and cohort status
+- Admin footer: Outscraper usage meter with projected monthly cost
 
 ---
 
@@ -411,14 +521,20 @@ ANTHROPIC_API_KEY=
 ASPNETCORE_ENVIRONMENT=Development
 ```
 
+Note: Health inspections, TABC, SBA loans require no API keys — free public data.
+Delivery platforms require no key but blocked by bot detection in Docker.
+
 ---
 
 ## Developer Profile
 - Experienced C# / .NET developer — standard .NET patterns, no over-explaining
-- New to Python — add inline comments on patterns that differ from C#
+- New to Python — add inline comments on patterns that differ from C#:
+  - Async/await, SQLAlchemy vs EF Core, package structure vs namespaces
+  - thefuzz fuzzy matching vs string comparison
+  - HTTP scraping vs HttpClient
 - Docker Desktop on Windows host
-- 107 verified DFW restaurants in prospective cohort
-- 25 restaurants in active scoring pipeline
+- 94 verified DFW restaurants (post-cleanup; 168 non-restaurants removed)
+- 62 in prospective backtest cohort; 16 retrospective
 - Pecan Lodge google_place_id: ChIJGXYxd92YToYR7yV_BSMQ2Xk (verified)
 
 ---
@@ -450,23 +566,21 @@ ASPNETCORE_ENVIRONMENT=Development
 
 **Phase 9 — COMPLETE** — DoorDash/Uber Eats checker, infrastructure ready
 
-**Phase 10 — COMPLETE** — Full backtesting framework:
-- 72 closed restaurants, 107 verified prospective cohort
-- 100% precision and recall after composite risk cap
-- Restaurant classifier prevents non-restaurant contamination
-- Outcome tracker scheduled weekly
+**Phase 10 — COMPLETE** — Full backtesting framework, 100% precision/recall,
+composite risk cap, restaurant classifier, 107 verified cohort (since reduced to 94 after cleanup)
 
 **Phase 11 — COMPLETE** — Demo UI polish and cost controls:
-- Dual line year-over-year review chart with hover tooltips and YoY summary
-- Recently scored list clickable — auto-populates score section
-- Outscraper biweekly schedule (1st/15th), 46 reviews/restaurant
-- 10,000 record/month cap enforced via outscraper_quota.py (~$29.53/month)
-- Outscraper usage meter in demo UI admin footer
-- All 205 restaurants re-scored with Outscraper as primary sparkline source
+- Dual line year-over-year review chart
+- Recently scored list clickable
+- Outscraper biweekly schedule, 46 reviews/restaurant, ~$25.94/month (94 restaurants)
+- 10,000 record/month cap enforced
+- Rating trend enhanced: distribution, keyword flags, response rate trend
+- Full reviews_data now stored in raw_signals (data storage policy fixed)
+- Data storage policy added to CLAUDE.md — NON-NEGOTIABLE
 
 **Phase 12 — Customer Validation (current)**
-- Target contacts identified: Sysco/US Foods district managers, equipment lenders, landlords
-- LinkedIn outreach messages drafted for all three customer types
-- Demo script prepared: 20-minute structure with pain-first opening and money question
+- LinkedIn outreach messages drafted for distributors, equipment lenders, landlords
+- Demo script prepared: 20-minute structure, pain-first, money question at end
 - Goal: first customer conversation by end of June 2026
 - Next action: send first 3 LinkedIn outreach messages this week
+- 90-day prospective cohort outcomes due August 14, 2026
