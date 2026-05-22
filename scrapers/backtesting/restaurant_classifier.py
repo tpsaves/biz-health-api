@@ -30,12 +30,23 @@ NON_RESTAURANT_TYPES = frozenset({
 # Name substrings (lowercase) that strongly indicate a non-restaurant.
 # Matched with a simple `in` check so "liquor" catches "AAAA Liquor", etc.
 NON_RESTAURANT_KEYWORDS = frozenset({
+    # Alcohol/tobacco retail
     "liquor", "spirits", "wine & beer", "wine and beer",
-    "food mart", "convenience", "deli mart", "off premise",
-    "package store", "tobacco", "c-store", "quick stop",
-    "quick sak", "minimart", "mini mart", "7-eleven", "7eleven",
-    "murphy express", "murphy usa", "raceway", "beverage depot",
+    "off premise", "package store", "tobacco", "beverage depot",
+    # Convenience / gas stations
+    "convenience", "c-store", "express mart", "food mart",
+    "mini mart", "minimart", "quick stop", "quick sak", "quik sak",
+    "corner store", "food & fuel",
+    "7-eleven", "7eleven",
+    "murphy express", "murphy usa", "raceway",
+    "chevron", "sunoco", "texaco", "speedmax",
+    # Grocery / markets
+    "aldi", "grocery", "meat market", "mercado",
     "food store",
+    # Lodging
+    "hotel", "suites",
+    # Kwik-* convenience chains
+    "kwik",
 })
 
 
