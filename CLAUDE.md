@@ -425,8 +425,8 @@ restaurant_classifier.py verifies businesses before onboarding:
 | Band | Count |
 |---|---|
 | Low (80-100) | 11 |
-| Moderate (60-79) | 34 |
-| Elevated (40-59) | 16 |
+| Moderate (60-79) | 29 |
+| Elevated (40-59) | 21 |
 | High (0-39) | 1 |
 | **Total** | **62** |
 
