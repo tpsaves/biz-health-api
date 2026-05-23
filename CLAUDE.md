@@ -46,6 +46,7 @@ who need to assess the risk of small restaurant businesses before extending cred
       engine_v2.py             # Current active engine with composite risk cap
       seasonality.py
       keyword_analyzer.py      # 5-category keyword detection from review text
+      signal_confidence.py     # TABC and inspection confidence classification
     /onboarding
       restaurant_lookup.py
       bulk_onboard.py
@@ -58,6 +59,7 @@ who need to assess the risk of small restaurant businesses before extending cred
       restaurant_classifier.py
       clean_cohort.py
       import_closed_restaurants.py
+      clean_restaurants.py     # Full-table cleanup: dry-run + live mode, FK-safe delete order
   /demo
     index.html
   /db
@@ -163,6 +165,15 @@ response_rate_declining   boolean,
 owner_disengaged          boolean,
 response_rate_recent      int,
 response_rate_prior       int,
+
+-- Signal confidence (Phase 11b)
+tabc_confidence           varchar,    -- confirmed, not_applicable, expected_not_found, unknown
+tabc_confidence_reason    varchar,
+inspection_confidence     varchar,    -- confirmed, not_applicable, expected_not_found, unknown
+inspection_confidence_reason varchar,
+tabc_expected_missing     boolean,    -- true when tabc_confidence = expected_not_found
+inspection_expected_missing boolean,  -- true when inspection_confidence = expected_not_found
+inspection_data_unavailable boolean,  -- true when city has portal but no records and confidence = unknown
 
 -- Score factors
 score_factors             JSONB,
@@ -409,6 +420,39 @@ restaurant_classifier.py verifies businesses before onboarding:
 - NON_RESTAURANT: liquor_store, convenience_store, grocery_or_supermarket, or name keywords
 - All cohort builder and onboarding flows verify classification before inserting
 
+### Signal Confidence (signal_confidence.py)
+Classifies whether absence of a signal is meaningful (potential risk) or expected/unknowable.
+
+**4 States:**
+| State | Meaning |
+|---|---|
+| `confirmed` | Record found and matched |
+| `not_applicable` | Business type does not require this signal (e.g. coffee shop needs no TABC) |
+| `expected_not_found` | Record expected based on business type but not found — scored as risk |
+| `unknown` | Cannot determine whether a record should exist |
+
+**TABC Classification** — uses Google Place `types` from `v1_raw.types`:
+- Any of `bar`, `night_club`, `liquor_store`, `brewery`, `winery` → `expected_not_found` if no record
+- All types are `meal_takeaway`, `cafe`, `bakery`, `fast_food` only → `not_applicable`
+- `restaurant` or `food` present (no alcohol indicators) → `unknown`
+- No place types → `unknown`
+
+**Inspection Classification** — uses city and Google Place `types`:
+- Cities with portals (Dallas, Fort Worth, Arlington, Grand Prairie, Plano, Frisco, McKinney) + food service types + no records → `expected_not_found`
+- Cities without portals (Irving, Garland, Denton) → `unknown` regardless
+- No food service types → `unknown`
+
+**Scoring Adjustments:**
+- `tabc_expected_missing = True`: operational_score − 15
+- `inspection_expected_missing = True`: operational_score − 10
+- `inspection_data_unavailable = True`: no score impact, surfaced in score_factors only
+
+**Google Place Types Source:**
+`types` field is fetched via the Google Places v1 API (`_V1_FIELD_MASK` includes `types`) and
+stored in `raw_signals` payload under `payload['v1_raw']['types']`. The engine reads place types
+from the latest `google_places` raw_signal at score time. Classification runs fresh at score time —
+not cached from the scraper payload.
+
 ---
 
 ## Backtesting Framework
@@ -491,6 +535,8 @@ restaurants in our prospective cohort — 90-day outcome data arrives August 202
 - owner_disengaged (orange — "Owner Disengaged")
 - bimodal_distribution (orange — "Polarized Reviews")
 - ownership_change_flag (yellow — "Ownership Change Detected")
+- tabc_expected_missing (orange — "License Missing")
+- inspection_expected_missing (orange — "Inspection Records Missing")
 - Never shown for insufficient_data
 
 ### Features
@@ -569,7 +615,7 @@ Delivery platforms require no key but blocked by bot detection in Docker.
 **Phase 10 — COMPLETE** — Full backtesting framework, 100% precision/recall,
 composite risk cap, restaurant classifier, 107 verified cohort (since reduced to 94 after cleanup)
 
-**Phase 11 — COMPLETE** — Demo UI polish and cost controls:
+**Phase 11 — COMPLETE** — Rating trend signals, UI polish, cost controls, signal confidence:
 - Dual line year-over-year review chart
 - Recently scored list clickable
 - Outscraper biweekly schedule, 46 reviews/restaurant, ~$25.94/month (94 restaurants)
@@ -577,6 +623,13 @@ composite risk cap, restaurant classifier, 107 verified cohort (since reduced to
 - Rating trend enhanced: distribution, keyword flags, response rate trend
 - Full reviews_data now stored in raw_signals (data storage policy fixed)
 - Data storage policy added to CLAUDE.md — NON-NEGOTIABLE
+- Signal confidence system: 4-state classification for TABC and inspection signals
+  - Distinguishes not_applicable / expected_not_found / unknown / confirmed
+  - expected_not_found penalizes operational_score (−15 TABC, −10 inspection)
+  - Google Places field mask extended to include `types` for classification
+  - 7 new health_scores columns: tabc_confidence, inspection_confidence, *_reason, *_expected_missing, inspection_data_unavailable
+  - 2 new demo warning badges: "License Missing", "Inspection Records Missing"
+  - 17 unit tests in test_signal_confidence.py — all pass
 
 **Phase 12 — Customer Validation (current)**
 - LinkedIn outreach messages drafted for distributors, equipment lenders, landlords
