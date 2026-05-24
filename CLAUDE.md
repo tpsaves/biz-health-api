@@ -378,7 +378,7 @@ outscraper_reviews.py now stores the full reviews_data array alongside all aggre
 - rating_distribution, keyword_findings, response_rate_recent/prior are
   computed at score time by engine_v2.py — NOT stored in the scraper payload
 - Backfill job: runs once on scheduler startup; fetches 200 reviews for restaurants
-  whose earliest outscraper record postdates March 25, 2026 (effective start date)
+  whose earliest outscraper record postdates May 25, 2026 (effective start date)
 - Backfill records tracked separately via is_backfill flag — NOT counted against monthly cap
 
 ### Google Places API Limitation

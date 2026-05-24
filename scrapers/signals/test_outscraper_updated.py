@@ -22,7 +22,7 @@ load_dotenv()
 PASS = "\033[32mPASS\033[0m"
 FAIL = "\033[31mFAIL\033[0m"
 
-_BACKFILL_CUTOFF = datetime(2026, 3, 25, tzinfo=timezone.utc)
+_BACKFILL_CUTOFF = datetime(2026, 5, 25, tzinfo=timezone.utc)
 
 _passed = 0
 _failed = 0
@@ -86,7 +86,7 @@ check("backfill_records_used key exists", "backfill_records_used" in summary, Tr
 
 # ── Backfill status ──────────────────────────────────────────────────────────
 
-print("\n── Backfill status (March 25, 2026 cutoff) ──")
+print("\n── Backfill status (May 25, 2026 cutoff) ──")
 
 with Session(engine) as session:
     restaurants = session.execute(
@@ -127,7 +127,7 @@ if needs_backfill:
         print(f"    … and {len(needs_backfill) - 20} more")
     print("\n  NOTE: Backfill job runs automatically 10s after scrapers container starts.")
 else:
-    print("\n  All restaurants have history from March 25, 2026 — backfill complete.")
+    print("\n  All restaurants have history from May 25, 2026 — backfill complete.")
 
 
 # ── Summary ──────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 """Outscraper monthly usage quota tracker.
 
 At $3 per 1,000 records a 15,000-record cap limits monthly Outscraper spend to ~$45.
-Backfill records (one-time March 25 catch-up) are tracked separately and do not
+Backfill records (one-time May 25 catch-up) are tracked separately and do not
 count against the monthly cap.
 """
 

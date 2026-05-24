@@ -178,18 +178,18 @@ def run_delivery_platforms_scrape() -> None:
     logger.info("[delivery_platforms] job complete")
 
 
-_BACKFILL_CUTOFF  = datetime(2026, 3, 25, tzinfo=timezone.utc)
+_BACKFILL_CUTOFF  = datetime(2026, 5, 25, tzinfo=timezone.utc)
 _BACKFILL_REVIEWS = 200
 
 
 def run_outscraper_backfill() -> None:
     """One-time startup backfill: fetch 200 reviews for any restaurant whose earliest
-    outscraper_reviews signal postdates March 25, 2026.
+    outscraper_reviews signal postdates May 25, 2026.
 
     Backfill records are tracked separately and do not count against the monthly cap.
     After this job completes the regular biweekly schedule takes over at 70 reviews/run.
     """
-    logger.info("[outscraper_backfill] checking for restaurants that need March 25 history")
+    logger.info("[outscraper_backfill] checking for restaurants that need May 25 history")
 
     needs_backfill = []
     with Session(engine) as session:
@@ -206,7 +206,7 @@ def run_outscraper_backfill() -> None:
                 needs_backfill.append(r)
 
     if not needs_backfill:
-        logger.info("[outscraper_backfill] all restaurants already have history from March 25 — skipping")
+        logger.info("[outscraper_backfill] all restaurants already have history from May 25 — skipping")
         return
 
     logger.info(
@@ -229,7 +229,7 @@ def run_outscraper_backfill() -> None:
                 logger.error("[outscraper_backfill] %s — FAILED: %s", r.name, exc)
 
     logger.info(
-        "[outscraper_backfill] complete — %d/%d restaurants now have history from March 25 2026",
+        "[outscraper_backfill] complete — %d/%d restaurants now have history from May 25 2026",
         completed, len(needs_backfill),
     )
 
@@ -365,7 +365,7 @@ def main() -> None:
         max_instances=1,
     )
     # One-time backfill: fires 10 seconds after startup. Fetches 200 reviews for
-    # any restaurant whose earliest outscraper record postdates March 25, 2026.
+    # any restaurant whose earliest outscraper record postdates May 25, 2026.
     # run_outscraper_backfill() is a no-op if all restaurants already have that history.
     scheduler.add_job(
         run_outscraper_backfill,
