@@ -18,14 +18,14 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from signals.outscraper_quota import check_quota, log_usage, MONTHLY_CAP
+from signals.outscraper_quota import check_quota, log_usage, log_backfill_usage, MONTHLY_CAP
 
 logger = logging.getLogger(__name__)
 
 _OUTSCRAPER_URL = "https://api.app.outscraper.com/maps/reviews-v3"
 _POLL_URL       = "https://api.app.outscraper.com/requests/{}"
-# 46 reviews × 107 restaurants × 2 runs/month = 9,844 records (~$29.53/month)
-_MAX_REVIEWS   = 46
+# 70 reviews × 107 restaurants × 2 runs/month = 14,980 records (~$44.94/month)
+_MAX_REVIEWS   = 70
 _POLL_RETRIES  = 20
 _POLL_INTERVAL = 6   # seconds between status polls
 
@@ -36,6 +36,8 @@ def scrape_outscraper_reviews(
     restaurant_id: str,
     session: Session,
     city: str = "",
+    max_reviews: int | None = None,
+    is_backfill: bool = False,
 ) -> dict:
     """Fetch recent Google reviews from Outscraper and store the full raw payload.
 
@@ -46,37 +48,45 @@ def scrape_outscraper_reviews(
 
     Uses a text search query (name + city) rather than place_id: prefix because
     the place_id: format returns empty results from the reviews-v3 endpoint.
+
+    max_reviews overrides _MAX_REVIEWS (used by the backfill job: 200 reviews).
+    is_backfill=True bypasses the monthly cap check and logs usage separately.
     """
     api_key = os.environ.get("OUTSCRAPER_API_KEY", "")
     if not api_key:
         raise RuntimeError("OUTSCRAPER_API_KEY not set in environment")
 
-    # Quota check — enforce monthly cap before hitting the API.
-    quota = check_quota(_MAX_REVIEWS, session)
-    if quota["remaining"] == 0:
-        logger.warning(
-            "[outscraper] monthly cap reached (%d records) — skipping %s",
-            MONTHLY_CAP, name,
-        )
-        session.execute(
-            text(
-                "INSERT INTO raw_signals (restaurant_id, source, payload) "
-                "VALUES (:rid, 'outscraper_quota_exceeded', CAST(:payload AS jsonb))"
-            ),
-            {
-                "rid":     restaurant_id,
-                "payload": json.dumps({"month": time.strftime("%Y-%m"), "cap": MONTHLY_CAP}),
-            },
-        )
-        session.commit()
-        return {"reviews_data": [], "monthly_breakdown": {}, "total_reviews_fetched": 0, "quota_exceeded": True}
+    effective_max = max_reviews if max_reviews is not None else _MAX_REVIEWS
 
-    reviews_limit = _MAX_REVIEWS if quota["remaining"] >= _MAX_REVIEWS else quota["remaining"]
-    if reviews_limit < _MAX_REVIEWS:
-        logger.info(
-            "[outscraper] reduced reviewsLimit to %d (only %d records remaining in quota)",
-            reviews_limit, quota["remaining"],
-        )
+    if is_backfill:
+        reviews_limit = effective_max
+    else:
+        # Quota check — enforce monthly cap before hitting the API.
+        quota = check_quota(effective_max, session)
+        if quota["remaining"] == 0:
+            logger.warning(
+                "[outscraper] monthly cap reached (%d records) — skipping %s",
+                MONTHLY_CAP, name,
+            )
+            session.execute(
+                text(
+                    "INSERT INTO raw_signals (restaurant_id, source, payload) "
+                    "VALUES (:rid, 'outscraper_quota_exceeded', CAST(:payload AS jsonb))"
+                ),
+                {
+                    "rid":     restaurant_id,
+                    "payload": json.dumps({"month": time.strftime("%Y-%m"), "cap": MONTHLY_CAP}),
+                },
+            )
+            session.commit()
+            return {"reviews_data": [], "monthly_breakdown": {}, "total_reviews_fetched": 0, "quota_exceeded": True}
+
+        reviews_limit = effective_max if quota["remaining"] >= effective_max else quota["remaining"]
+        if reviews_limit < effective_max:
+            logger.info(
+                "[outscraper] reduced reviewsLimit to %d (only %d records remaining in quota)",
+                reviews_limit, quota["remaining"],
+            )
 
     headers = {"X-API-KEY": api_key}
 
@@ -131,7 +141,10 @@ def scrape_outscraper_reviews(
     )
     session.commit()
 
-    log_usage(restaurant_id, len(reviews), session)
+    if is_backfill:
+        log_backfill_usage(restaurant_id, len(reviews), session)
+    else:
+        log_usage(restaurant_id, len(reviews), session)
 
     logger.info(
         "Stored outscraper_reviews signal — name=%s months=%d total_reviews=%d",

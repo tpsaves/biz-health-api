@@ -9,6 +9,7 @@ import atexit
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -177,15 +178,71 @@ def run_delivery_platforms_scrape() -> None:
     logger.info("[delivery_platforms] job complete")
 
 
+_BACKFILL_CUTOFF  = datetime(2026, 3, 25, tzinfo=timezone.utc)
+_BACKFILL_REVIEWS = 200
+
+
+def run_outscraper_backfill() -> None:
+    """One-time startup backfill: fetch 200 reviews for any restaurant whose earliest
+    outscraper_reviews signal postdates March 25, 2026.
+
+    Backfill records are tracked separately and do not count against the monthly cap.
+    After this job completes the regular biweekly schedule takes over at 70 reviews/run.
+    """
+    logger.info("[outscraper_backfill] checking for restaurants that need March 25 history")
+
+    needs_backfill = []
+    with Session(engine) as session:
+        for r in _get_restaurants(session):
+            rid      = str(r.id)
+            earliest = session.execute(
+                text(
+                    "SELECT MIN(scraped_at) FROM raw_signals "
+                    "WHERE restaurant_id = CAST(:rid AS uuid) AND source = 'outscraper_reviews'"
+                ),
+                {"rid": rid},
+            ).scalar()
+            if earliest is None or earliest.replace(tzinfo=timezone.utc) > _BACKFILL_CUTOFF:
+                needs_backfill.append(r)
+
+    if not needs_backfill:
+        logger.info("[outscraper_backfill] all restaurants already have history from March 25 — skipping")
+        return
+
+    logger.info(
+        "[outscraper_backfill] %d restaurants need backfill — fetching %d reviews each",
+        len(needs_backfill), _BACKFILL_REVIEWS,
+    )
+
+    completed = 0
+    with Session(engine) as session:
+        for r in needs_backfill:
+            rid = str(r.id)
+            try:
+                scrape_outscraper_reviews(
+                    r.google_place_id, r.name, rid, session,
+                    city=r.city, max_reviews=_BACKFILL_REVIEWS, is_backfill=True,
+                )
+                completed += 1
+                logger.info("[outscraper_backfill] %s — OK", r.name)
+            except Exception as exc:
+                logger.error("[outscraper_backfill] %s — FAILED: %s", r.name, exc)
+
+    logger.info(
+        "[outscraper_backfill] complete — %d/%d restaurants now have history from March 25 2026",
+        completed, len(needs_backfill),
+    )
+
+
 def run_outscraper_scrape() -> None:
     """Fetch Outscraper review history for all tracked restaurants.
 
-    Runs biweekly (1st and 15th at 1:00 AM UTC) — 46 reviews/restaurant per run,
-    107 restaurants × 46 × 2 = 9,844 records/month (~$29.53).
+    Runs biweekly (1st and 15th at 1:00 AM UTC) — 70 reviews/restaurant per run,
+    107 restaurants × 70 × 2 = 14,980 records/month (~$44.94).
     """
     logger.info(
         "[outscraper] job started — biweekly schedule (1st and 15th), "
-        "46 reviews/restaurant, ~9,844 records/month"
+        "70 reviews/restaurant, ~14,980 records/month"
     )
     with Session(engine) as session:
         summary = outscraper_quota_summary(session)
@@ -298,13 +355,23 @@ def main() -> None:
         max_instances=1,
     )
     # Outscraper: biweekly on the 1st and 15th at 1:00 AM UTC.
-    # 46 reviews × 107 restaurants × 2 runs/month = 9,844 records/month (~$29.53).
+    # 70 reviews × 107 restaurants × 2 runs/month = 14,980 records/month (~$44.94).
     # CronTrigger with day='1,15' fires on both dates; no drift vs IntervalTrigger.
     scheduler.add_job(
         run_outscraper_scrape,
         CronTrigger(day="1,15", hour=1, minute=0, timezone="UTC"),
         id="outscraper_scrape",
         coalesce=True,
+        max_instances=1,
+    )
+    # One-time backfill: fires 10 seconds after startup. Fetches 200 reviews for
+    # any restaurant whose earliest outscraper record postdates March 25, 2026.
+    # run_outscraper_backfill() is a no-op if all restaurants already have that history.
+    scheduler.add_job(
+        run_outscraper_backfill,
+        "date",
+        run_date=datetime.now(timezone.utc) + timedelta(seconds=10),
+        id="outscraper_backfill",
         max_instances=1,
     )
     # SBA loans: Sunday 1:30 AM UTC (after Outscraper, before scoring at 5 AM).

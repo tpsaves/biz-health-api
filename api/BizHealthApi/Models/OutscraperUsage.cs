@@ -19,4 +19,7 @@ public class OutscraperUsage
 
     [Column("scraped_at")]
     public DateTime ScrapedAt { get; set; }
+
+    [Column("is_backfill")]
+    public bool IsBackfill { get; set; }
 }

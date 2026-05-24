@@ -367,16 +367,19 @@ outscraper_reviews.py now stores the full reviews_data array alongside all aggre
 | Denton | Denton CAD (dentoncad.com) |
 
 ### Outscraper Configuration
-- Reviews per restaurant: 46 (full reviews_data array stored)
+- Reviews per restaurant: 70 (full reviews_data array stored)
 - Schedule: biweekly — 1st and 15th of month at 1:00 AM UTC
-- Monthly projected usage: 94 × 46 × 2 = 8,648 records
-- Monthly projected cost: ~$25.94
-- Hard cap: 10,000 records/month enforced via outscraper_quota.py
+- Monthly projected usage: 107 × 70 × 2 = 14,980 records
+- Monthly projected cost: ~$44.94
+- Hard cap: 15,000 records/month enforced via outscraper_quota.py
 - Quota exhausted: skip scrape, log outscraper_quota_exceeded to raw_signals
 - Partial quota: reduce reviewsLimit to remaining records rather than skipping
 - Payload includes: reviews_data (full), monthly_breakdown
 - rating_distribution, keyword_findings, response_rate_recent/prior are
   computed at score time by engine_v2.py — NOT stored in the scraper payload
+- Backfill job: runs once on scheduler startup; fetches 200 reviews for restaurants
+  whose earliest outscraper record postdates March 25, 2026 (effective start date)
+- Backfill records tracked separately via is_backfill flag — NOT counted against monthly cap
 
 ### Google Places API Limitation
 Returns maximum 5 reviews, not date-sorted. rankPreference: NEWEST not supported on

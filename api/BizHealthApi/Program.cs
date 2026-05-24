@@ -422,6 +422,23 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             deliveryPlatformLoss   = score.DeliveryPlatformLoss,
             // Phase 10: composite risk cap
             compositeRiskCap       = score.CompositeRiskCap,
+            // Phase 11: rating distribution
+            pct5StarRecent         = score.Pct5StarRecent,
+            pct1StarRecent         = score.Pct1StarRecent,
+            highNegativeRate       = score.HighNegativeRate,
+            negativeRateRising     = score.NegativeRateRising,
+            bimodalDistribution    = score.BimodalDistribution,
+            // Phase 11: keyword flags
+            sanitationFlag         = score.SanitationFlag,
+            operationalInstabilityFlag = score.OperationalInstabilityFlag,
+            ownershipChangeFlag    = score.OwnershipChangeFlag,
+            qualityDeclineFlag     = score.QualityDeclineFlag,
+            financialStressFlag    = score.FinancialStressFlag,
+            // Phase 11: response rate trend
+            responseRateDeclining  = score.ResponseRateDeclining,
+            ownerDisengaged        = score.OwnerDisengaged,
+            responseRateRecent     = score.ResponseRateRecent,
+            responseRatePrior      = score.ResponseRatePrior,
         },
         details = new
         {
@@ -562,13 +579,18 @@ app.MapGet("/api/v1/backtesting/cohort", async (
 // GET /api/v1/admin/outscraper-quota — current month Outscraper usage summary.
 app.MapGet("/api/v1/admin/outscraper-quota", async (BizHealthDbContext db) =>
 {
-    const int monthlyCap    = 10_000;
+    const int monthlyCap    = 15_000;
     const double costPer1k  = 3.00;
 
     var currentMonth = DateTime.UtcNow.ToString("yyyy-MM");
 
+    // Exclude backfill records — they don't count against the monthly cap.
     var used = await db.OutscraperUsages
-        .Where(u => u.Month == currentMonth)
+        .Where(u => u.Month == currentMonth && !u.IsBackfill)
+        .SumAsync(u => (int?)u.RecordsFetched) ?? 0;
+
+    var backfillUsed = await db.OutscraperUsages
+        .Where(u => u.Month == currentMonth && u.IsBackfill)
         .SumAsync(u => (int?)u.RecordsFetched) ?? 0;
 
     var remaining = Math.Max(0, monthlyCap - used);
@@ -577,14 +599,15 @@ app.MapGet("/api/v1/admin/outscraper-quota", async (BizHealthDbContext db) =>
 
     return Results.Ok(new
     {
-        month              = currentMonth,
-        records_used       = used,
-        records_remaining  = remaining,
-        cap                = monthlyCap,
-        estimated_cost     = $"${cost:F2}",
-        pct_used           = pctUsed,
-        projected_monthly  = 9844,
-        schedule           = "biweekly (1st and 15th)",
+        month                 = currentMonth,
+        records_used          = used,
+        records_remaining     = remaining,
+        cap                   = monthlyCap,
+        estimated_cost        = $"${cost:F2}",
+        pct_used              = pctUsed,
+        projected_monthly     = 14_980,
+        schedule              = "biweekly (1st and 15th)",
+        backfill_records_used = backfillUsed,
     });
 });
 

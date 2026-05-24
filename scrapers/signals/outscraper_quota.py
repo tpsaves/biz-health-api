@@ -1,6 +1,8 @@
 """Outscraper monthly usage quota tracker.
 
-At $3 per 1,000 records a 10,000-record cap limits monthly Outscraper spend to $30.
+At $3 per 1,000 records a 15,000-record cap limits monthly Outscraper spend to ~$45.
+Backfill records (one-time March 25 catch-up) are tracked separately and do not
+count against the monthly cap.
 """
 
 import logging
@@ -11,7 +13,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-MONTHLY_CAP    = 10_000
+MONTHLY_CAP    = 15_000
 COST_PER_1000  = 3.00
 
 
@@ -20,9 +22,26 @@ def _current_month() -> str:
 
 
 def _used_this_month(session: Session) -> int:
+    # Exclude backfill records — they don't count against the monthly cap.
     return int(
         session.execute(
-            text("SELECT COALESCE(SUM(records_fetched), 0) FROM outscraper_usage WHERE month = :m"),
+            text(
+                "SELECT COALESCE(SUM(records_fetched), 0) FROM outscraper_usage "
+                "WHERE month = :m AND COALESCE(is_backfill, false) = false"
+            ),
+            {"m": _current_month()},
+        ).scalar()
+        or 0
+    )
+
+
+def _backfill_used_this_month(session: Session) -> int:
+    return int(
+        session.execute(
+            text(
+                "SELECT COALESCE(SUM(records_fetched), 0) FROM outscraper_usage "
+                "WHERE month = :m AND is_backfill = true"
+            ),
             {"m": _current_month()},
         ).scalar()
         or 0
@@ -41,32 +60,44 @@ def check_quota(records_requested: int, session: Session) -> dict:
     return {"allowed": allowed, "remaining": remaining, "used": used}
 
 
-def log_usage(restaurant_id: str, records_fetched: int, session: Session) -> None:
+def log_usage(restaurant_id: str, records_fetched: int, session: Session, is_backfill: bool = False) -> None:
     """Insert a usage record after a successful Outscraper API call."""
     session.execute(
         text(
             """
-            INSERT INTO outscraper_usage (restaurant_id, records_fetched, month)
-            VALUES (CAST(:rid AS uuid), :records, :month)
+            INSERT INTO outscraper_usage (restaurant_id, records_fetched, month, is_backfill)
+            VALUES (CAST(:rid AS uuid), :records, :month, :is_backfill)
             """
         ),
-        {"rid": restaurant_id, "records": records_fetched, "month": _current_month()},
+        {
+            "rid":         restaurant_id,
+            "records":     records_fetched,
+            "month":       _current_month(),
+            "is_backfill": is_backfill,
+        },
     )
     session.commit()
 
 
+def log_backfill_usage(restaurant_id: str, records_fetched: int, session: Session) -> None:
+    """Track backfill records separately — not counted against the monthly cap."""
+    log_usage(restaurant_id, records_fetched, session, is_backfill=True)
+
+
 def monthly_summary(session: Session) -> dict:
     """Return current month usage summary with cost estimate."""
-    used      = _used_this_month(session)
-    remaining = max(0, MONTHLY_CAP - used)
-    cost      = used / 1000 * COST_PER_1000
+    used          = _used_this_month(session)
+    backfill_used = _backfill_used_this_month(session)
+    remaining     = max(0, MONTHLY_CAP - used)
+    cost          = used / 1000 * COST_PER_1000
     return {
-        "month":              _current_month(),
-        "records_used":       used,
-        "records_remaining":  remaining,
-        "cap":                MONTHLY_CAP,
-        "estimated_cost":     f"${cost:.2f}",
-        "pct_used":           round(used / MONTHLY_CAP * 100),
-        "projected_monthly":  9844,
-        "schedule":           "biweekly (1st and 15th)",
+        "month":                 _current_month(),
+        "records_used":          used,
+        "records_remaining":     remaining,
+        "cap":                   MONTHLY_CAP,
+        "estimated_cost":        f"${cost:.2f}",
+        "pct_used":              round(used / MONTHLY_CAP * 100),
+        "projected_monthly":     14_980,
+        "schedule":              "biweekly (1st and 15th)",
+        "backfill_records_used": backfill_used,
     }
