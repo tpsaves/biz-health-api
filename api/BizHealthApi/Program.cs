@@ -611,6 +611,26 @@ app.MapGet("/api/v1/admin/outscraper-quota", async (BizHealthDbContext db) =>
     });
 });
 
+// GET /api/v1/admin/outscraper-runs — last 10 biweekly run results with quota status.
+app.MapGet("/api/v1/admin/outscraper-runs", async (BizHealthDbContext db) =>
+{
+    var runs = await db.OutscraperRunLogs
+        .OrderByDescending(r => r.CreatedAt)
+        .Take(10)
+        .ToListAsync();
+
+    return Results.Ok(runs.Select(r => new
+    {
+        run_date              = r.RunDate.ToString("yyyy-MM-dd"),
+        status                = r.Status,
+        restaurants_completed = r.RestaurantsCompleted,
+        restaurants_skipped   = r.RestaurantsSkipped,
+        records_used_before   = r.RecordsUsedBefore,
+        records_used_after    = r.RecordsUsedAfter,
+        created_at            = r.CreatedAt,
+    }));
+});
+
 app.Run();
 
 record SearchRequest(string? Name, string? Address, string? City, Guid? RestaurantId);

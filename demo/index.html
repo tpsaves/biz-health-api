@@ -695,6 +695,7 @@
       </div>
     </div>
   </div>
+  <div id="run-history" style="margin-top:10px;font-size:12px;color:var(--muted)">Loading run history…</div>
 </footer>
 
 <script>
@@ -1925,6 +1926,39 @@
   }
 
   loadOutscraperQuota();
+
+  async function loadOutscraperRuns() {
+    const el = document.getElementById('run-history');
+    try {
+      const r = await fetch(API + '/api/v1/admin/outscraper-runs');
+      if (!r.ok) throw new Error(r.status);
+      const runs = await r.json();
+      if (!runs.length) { el.textContent = 'No runs recorded yet.'; return; }
+
+      const dotCfg = {
+        ok:        { color: '#22c55e', tip: 'Run completed successfully' },
+        throttled: { color: '#f59e0b', tip: 'Partial run — quota nearly exhausted' },
+        skipped:   { color: '#ef4444', tip: 'Run skipped — quota exhausted' },
+      };
+
+      const rows = runs.map(run => {
+        const cfg   = dotCfg[run.status] || dotCfg.ok;
+        const dot   = `<span title="${cfg.tip}" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${cfg.color};vertical-align:middle;margin-right:5px;cursor:default"></span>`;
+        const delta = run.records_used_after - run.records_used_before;
+        const deltaStr = delta > 0 ? `+${delta.toLocaleString()} records` : 'no records';
+        const restStr  = run.status === 'skipped'
+          ? 'skipped'
+          : `${run.restaurants_completed} ok${run.restaurants_skipped > 0 ? `, ${run.restaurants_skipped} skipped` : ''}`;
+        return `<span style="margin-right:18px;white-space:nowrap">${dot}<strong style="color:var(--text)">${run.run_date}</strong> &mdash; ${restStr} &mdash; ${deltaStr}</span>`;
+      }).join('');
+
+      el.innerHTML = `<span style="font-weight:600;color:var(--text);margin-right:8px">Recent runs:</span>${rows}`;
+    } catch(e) {
+      el.textContent = 'Run history unavailable.';
+    }
+  }
+
+  loadOutscraperRuns();
 </script>
 </body>
 </html>

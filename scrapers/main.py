@@ -23,7 +23,7 @@ from signals.google_places import scrape_place
 from signals.foursquare import scrape_venue
 from signals.health_inspections import scrape_inspections
 from signals.outscraper_reviews import scrape_outscraper_reviews
-from signals.outscraper_quota import monthly_summary as outscraper_quota_summary
+from signals.outscraper_quota import monthly_summary as outscraper_quota_summary, log_run_status
 from signals.tabc_license import scrape_license
 from signals.hours_monitor import scrape_hours
 from signals.sba_loans import scrape_sba_loans
@@ -246,6 +246,7 @@ def run_outscraper_scrape() -> None:
     )
     with Session(engine) as session:
         summary = outscraper_quota_summary(session)
+        records_before = summary["records_used"]
         logger.info(
             "[outscraper] quota: %d/%d records used (%s) — %d remaining",
             summary["records_used"], summary["cap"],
@@ -253,16 +254,29 @@ def run_outscraper_scrape() -> None:
         )
         if summary["records_remaining"] == 0:
             logger.warning("[outscraper] monthly quota exhausted — skipping entire batch")
+            log_run_status("skipped", 0, 0, records_before, records_before, session)
             return
 
+        completed = 0
+        quota_hit = 0
         for r in _get_restaurants(session):
             rid = str(r.id)
             try:
-                scrape_outscraper_reviews(r.google_place_id, r.name, rid, session, city=r.city)
-                logger.info("[outscraper] %s — OK", r.name)
+                result = scrape_outscraper_reviews(r.google_place_id, r.name, rid, session, city=r.city)
+                if result.get("quota_exceeded"):
+                    quota_hit += 1
+                    logger.warning("[outscraper] %s — quota exhausted mid-run", r.name)
+                else:
+                    completed += 1
+                    logger.info("[outscraper] %s — OK", r.name)
             except Exception as exc:
                 logger.error("[outscraper] %s — FAILED: %s", r.name, exc)
-    logger.info("[outscraper] job complete")
+
+        fresh = outscraper_quota_summary(session)
+        status = "throttled" if quota_hit > 0 else "ok"
+        log_run_status(status, completed, quota_hit, records_before, fresh["records_used"], session)
+
+    logger.info("[outscraper] job complete — status=%s completed=%d quota_hit=%d", status, completed, quota_hit)
 
 
 def run_weekly_scrape() -> None:

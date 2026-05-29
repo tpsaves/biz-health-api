@@ -84,6 +84,34 @@ def log_backfill_usage(restaurant_id: str, records_fetched: int, session: Sessio
     log_usage(restaurant_id, records_fetched, session, is_backfill=True)
 
 
+def log_run_status(
+    status: str,
+    restaurants_completed: int,
+    restaurants_skipped: int,
+    records_used_before: int,
+    records_used_after: int,
+    session: Session,
+) -> None:
+    """Persist a biweekly run status to outscraper_run_log for the quota history display."""
+    session.execute(
+        text(
+            """
+            INSERT INTO outscraper_run_log
+              (status, restaurants_completed, restaurants_skipped, records_used_before, records_used_after)
+            VALUES (:status, :completed, :skipped, :before, :after)
+            """
+        ),
+        {
+            "status":    status,
+            "completed": restaurants_completed,
+            "skipped":   restaurants_skipped,
+            "before":    records_used_before,
+            "after":     records_used_after,
+        },
+    )
+    session.commit()
+
+
 def monthly_summary(session: Session) -> dict:
     """Return current month usage summary with cost estimate."""
     used          = _used_this_month(session)

@@ -10,5 +10,6 @@ public class BizHealthDbContext(DbContextOptions<BizHealthDbContext> options) : 
     public DbSet<HealthScore>     HealthScores     => Set<HealthScore>();
     public DbSet<ClosedRestaurant> ClosedRestaurants => Set<ClosedRestaurant>();
     public DbSet<BacktestCohort>  BacktestCohorts  => Set<BacktestCohort>();
-    public DbSet<OutscraperUsage> OutscraperUsages => Set<OutscraperUsage>();
+    public DbSet<OutscraperUsage>  OutscraperUsages  => Set<OutscraperUsage>();
+    public DbSet<OutscraperRunLog> OutscraperRunLogs => Set<OutscraperRunLog>();
 }
