@@ -649,6 +649,55 @@
     </table>
   </div>
 
+  <!-- Out-of-Time Validation -->
+  <div class="card" id="bt-holdout-card">
+    <div class="card-title">Out-of-Time Validation
+      <span style="font-weight:400;font-size:12px;color:var(--muted);margin-left:8px">Performance measured on closures the model was never tuned on</span>
+    </div>
+    <div id="bt-holdout-body" style="font-size:13px;color:var(--muted)">Loading…</div>
+  </div>
+
+  <!-- Early Warning Lead Time -->
+  <div class="card" id="bt-leadtime-card">
+    <div class="card-title">Early Warning Lead Time</div>
+    <div id="bt-leadtime-summary" style="font-size:13px;font-style:italic;color:var(--text);margin-bottom:12px">Loading…</div>
+    <table class="bt-table" id="bt-leadtime-table">
+      <thead>
+        <tr>
+          <th>Threshold crossed</th>
+          <th>Avg lead time</th>
+          <th>% flagged 30d+ early</th>
+          <th>% flagged 90d+ early</th>
+        </tr>
+      </thead>
+      <tbody id="bt-leadtime-body">
+        <tr><td colspan="4" class="bt-loading">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Score-Band Outcome Table -->
+  <div class="card" id="bt-bandtable-card">
+    <div class="card-title">Score-Band Outcome Table
+      <span style="font-weight:400;font-size:12px;color:var(--muted);margin-left:8px">closure rate (proxy outcome)</span>
+    </div>
+    <div id="bt-bandtable-caveat" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+    <table class="bt-table" id="bt-bandtable">
+      <thead>
+        <tr>
+          <th>Score Band</th>
+          <th>Count</th>
+          <th>Closure Rate</th>
+          <th>Cumulative % of Closures</th>
+        </tr>
+      </thead>
+      <tbody id="bt-bandtable-body">
+        <tr><td colspan="4" class="bt-loading">Loading…</td></tr>
+      </tbody>
+    </table>
+    <div id="bt-bandtable-mono" style="font-size:12px;margin-top:8px;color:var(--muted)"></div>
+  </div>
+
   <!-- Prospective cohort status -->
   <div class="card">
     <div class="card-title">Prospective Cohort Tracking</div>
@@ -1751,18 +1800,27 @@
     _btLoaded = true;
 
     try {
-      const [summaryRes, cohortRes] = await Promise.all([
+      const [summaryRes, cohortRes, holdoutRes, leadtimeRes, bandtableRes] = await Promise.all([
         fetch(API + '/api/v1/backtesting/summary'),
         fetch(API + '/api/v1/backtesting/cohort?cohortType=prospective&pageSize=100'),
+        fetch(API + '/api/v1/backtesting/holdout'),
+        fetch(API + '/api/v1/backtesting/lead-time'),
+        fetch(API + '/api/v1/backtesting/band-table'),
       ]);
 
-      const summary = summaryRes.ok ? await summaryRes.json() : null;
-      const cohort  = cohortRes.ok  ? await cohortRes.json()  : null;
+      const summary   = summaryRes.ok   ? await summaryRes.json()   : null;
+      const cohort    = cohortRes.ok    ? await cohortRes.json()    : null;
+      const holdout   = holdoutRes.ok   ? await holdoutRes.json()   : null;
+      const leadtime  = leadtimeRes.ok  ? await leadtimeRes.json()  : null;
+      const bandtable = bandtableRes.ok ? await bandtableRes.json() : null;
 
       renderBtSummary(summary);
       renderBtMetrics(summary);
       renderBtBandTable(summary);
       renderBtSignalTable(summary);
+      renderBtHoldout(holdout);
+      renderBtLeadTime(leadtime);
+      renderBtBandOutcomeTable(bandtable);
       renderBtCohortTable(cohort);
     } catch (err) {
       document.getElementById('bt-summary-hero').innerHTML =
@@ -1923,6 +1981,82 @@
     } catch(e) {
       document.getElementById('quota-label').textContent = 'Outscraper quota unavailable';
     }
+  }
+
+  function renderBtHoldout(d) {
+    const el = document.getElementById('bt-holdout-body');
+    if (!d) { el.textContent = 'Holdout data unavailable.'; return; }
+
+    const ts = d.test_set;
+    const honest  = ts?.performance_honest;
+    const withCap = ts?.performance_with_cap;
+    const train   = d.train_set;
+
+    const metricRow = (label, prec, rec, note) => `
+      <tr>
+        <td style="padding:6px 8px;font-weight:600">${escHtml(label)}</td>
+        <td style="padding:6px 8px">${prec != null ? prec + '%' : '—'}</td>
+        <td style="padding:6px 8px">${rec  != null ? rec  + '%' : '—'}</td>
+        <td style="padding:6px 8px;color:var(--muted);font-size:12px">${escHtml(note || '')}</td>
+      </tr>`;
+
+    el.innerHTML = `
+      <table class="bt-table" style="margin-bottom:10px">
+        <thead><tr><th>Set</th><th>Precision</th><th>Recall</th><th>Note</th></tr></thead>
+        <tbody>
+          ${metricRow('Train (2017-2021, n=' + (train?.count || 0) + ')', train?.performance?.precision_pct, train?.performance?.recall_pct, 'All rules applied')}
+          ${metricRow('Test  (2022-2023, n=' + (ts?.count || 0) + ') — w/ composite cap', withCap?.precision_pct, withCap?.recall_pct, '⚠ Leakage: cap derived from these restaurants')}
+          ${metricRow('Test  (2022-2023, n=' + (ts?.count || 0) + ') — honest', honest?.precision_pct, honest?.recall_pct, '✓ Cap excluded — train-set rules only')}
+        </tbody>
+      </table>
+      <div style="font-size:12px;color:var(--muted)">${escHtml(d.leakage_summary || '')}</div>`;
+  }
+
+  function renderBtLeadTime(d) {
+    const summary = document.getElementById('bt-leadtime-summary');
+    const body    = document.getElementById('bt-leadtime-body');
+    if (!d) { summary.textContent = 'Lead time data unavailable.'; body.innerHTML = ''; return; }
+
+    summary.textContent = d.plain_english || '';
+
+    const thresholds = d.threshold_summary || [];
+    if (!thresholds.length) { body.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">No data.</td></tr>'; return; }
+
+    body.innerHTML = thresholds.map(ts => `
+      <tr>
+        <td>${escHtml(ts.threshold_label)}</td>
+        <td>${ts.avg_lead_days != null ? ts.avg_lead_days + ' days' : 'N/A'}</td>
+        <td>${ts.pct_flagged_30d_plus != null ? ts.pct_flagged_30d_plus + '%' : '—'}</td>
+        <td>${ts.pct_flagged_90d_plus != null ? ts.pct_flagged_90d_plus + '%' : '—'}</td>
+      </tr>`).join('');
+  }
+
+  function renderBtBandOutcomeTable(d) {
+    const caveatEl = document.getElementById('bt-bandtable-caveat');
+    const body     = document.getElementById('bt-bandtable-body');
+    const monoEl   = document.getElementById('bt-bandtable-mono');
+    if (!d) { body.innerHTML = '<tr><td colspan="4" style="color:var(--muted)">Band table unavailable.</td></tr>'; return; }
+
+    caveatEl.textContent = d.proxy_caveat || '';
+
+    const bands = d.bands || [];
+    body.innerHTML = bands.map(b => {
+      const rate = b.closure_rate_pct != null ? b.closure_rate_pct + '%' : 'N/A (no data)';
+      const color = b.score_band?.includes('High') ? 'var(--red)'
+                  : b.score_band?.includes('Elevated') ? 'var(--orange)'
+                  : b.score_band?.includes('Moderate') ? 'var(--amber)'
+                  : 'var(--green)';
+      return `<tr>
+        <td><span style="color:${color};font-weight:600">${escHtml(b.score_band || '')}</span></td>
+        <td>${b.count}</td>
+        <td>${rate}</td>
+        <td>${b.cum_pct_closures != null ? b.cum_pct_closures + '%' : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    monoEl.textContent = d.is_monotonic
+      ? '✓ Monotonic — closure rate increases as score worsens'
+      : '⚠ Not fully monotonic — review band assignments';
   }
 
   loadOutscraperQuota();

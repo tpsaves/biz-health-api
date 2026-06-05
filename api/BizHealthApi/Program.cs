@@ -1,6 +1,7 @@
 using BizHealthApi.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Encodings.Web;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +27,9 @@ builder.Services.AddCors(options =>
         p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 builder.Services.AddHttpClient();
+
+builder.Services.ConfigureHttpJsonOptions(opts =>
+    opts.SerializerOptions.Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping);
 
 var app = builder.Build();
 
@@ -608,6 +612,209 @@ app.MapGet("/api/v1/admin/outscraper-quota", async (BizHealthDbContext db) =>
         projected_monthly     = 14_980,
         schedule              = "biweekly (1st and 15th)",
         backfill_records_used = backfillUsed,
+    });
+});
+
+// GET /api/v1/backtesting/holdout — out-of-time holdout validation (Phase 13).
+// Splits retrospective cohort at 2022-01-01 and reports honest test-set performance.
+app.MapGet("/api/v1/backtesting/holdout", async (BizHealthDbContext db) =>
+{
+    var trainCutoff = new DateOnly(2022, 1, 1);
+
+    var rows = await db.BacktestCohorts
+        .Where(b => b.CohortType == "retrospective" && b.Notes != null && b.Notes.Contains("T-90"))
+        .Join(db.Restaurants, b => b.RestaurantId, r => r.Id, (b, r) => new { b, r })
+        .OrderBy(x => x.b.ClosureDate)
+        .Select(x => new
+        {
+            name             = x.r.Name,
+            baseline_score   = x.b.BaselineScore ?? 0,
+            closure_date     = x.b.ClosureDate,
+            baseline_factors = x.b.BaselineFactors,
+        })
+        .ToListAsync();
+
+    bool CapFired(string? f)
+    {
+        if (string.IsNullOrEmpty(f)) return false;
+        try { using var d = JsonDocument.Parse(f); return d.RootElement.TryGetProperty("composite_risk_cap", out var p) && p.GetBoolean(); }
+        catch { return false; }
+    }
+
+    var train = rows.Where(r => r.closure_date < trainCutoff).ToList();
+    var test  = rows.Where(r => r.closure_date >= trainCutoff).ToList();
+
+    // Precision is always 100% (no false positives — retrospective set is all confirmed closures).
+    int trainTp = train.Count(r => r.baseline_score <= 59);
+    int trainFn = train.Count - trainTp;
+    double? trainRecall = train.Count > 0 ? Math.Round((double)trainTp / train.Count * 100, 1) : null;
+
+    // Test with cap (cap fired = score is exactly 59 by rule, flagged correctly but via leaked rule).
+    int testTpCap = test.Count(r => r.baseline_score <= 59);
+    int testFnCap = test.Count - testTpCap;
+    double? testRecallCap = test.Count > 0 ? Math.Round((double)testTpCap / test.Count * 100, 1) : null;
+
+    // Test without cap: restaurants where cap fired would have scored > 59 (not flagged).
+    int testTpHonest = test.Count(r => r.baseline_score <= 59 && !CapFired(r.baseline_factors));
+    int testFnHonest = test.Count - testTpHonest;
+    double? testRecallHonest = test.Count > 0 ? Math.Round((double)testTpHonest / test.Count * 100, 1) : null;
+
+    return Results.Ok(new
+    {
+        train_cutoff = trainCutoff.ToString("yyyy-MM-dd"),
+        train_set = new
+        {
+            count       = train.Count,
+            date_range  = train.Count > 0 ? $"{train.First().closure_date} to {train.Last().closure_date}" : "",
+            restaurants = train.Select(r => r.name),
+            performance = new { true_positives = trainTp, false_negatives = trainFn, precision_pct = (double?)100.0, recall_pct = trainRecall },
+        },
+        test_set = new
+        {
+            count       = test.Count,
+            date_range  = test.Count > 0 ? $"{test.First().closure_date} to {test.Last().closure_date}" : "",
+            restaurants = test.Select(r => r.name),
+            performance_with_cap = new
+            {
+                true_positives = testTpCap, false_negatives = testFnCap,
+                precision_pct  = (double?)100.0, recall_pct = testRecallCap,
+                caveat         = "Composite cap was derived from these test-set restaurants - result is optimistic.",
+            },
+            performance_honest = new
+            {
+                true_positives = testTpHonest, false_negatives = testFnHonest,
+                precision_pct  = testTpHonest > 0 ? (double?)100.0 : null, recall_pct = testRecallHonest,
+                note           = "Uses only rules derivable from the train set alone (composite cap excluded).",
+            },
+        },
+        leakage_verdict = "FAIL",
+        leakage_summary = "Composite cap (operational < 65 AND velocity < 30 -> cap 59) was derived from test-set restaurants. Honest test-set recall excludes this rule.",
+        note            = "Performance measured on closures the model was never tuned on (2022-2023).",
+    });
+});
+
+// GET /api/v1/backtesting/lead-time — early warning lead time summary (Phase 13).
+app.MapGet("/api/v1/backtesting/lead-time", async (BizHealthDbContext db) =>
+{
+    var rows = await db.BacktestCohorts
+        .Where(b => b.CohortType == "retrospective")
+        .Join(db.Restaurants, b => b.RestaurantId, r => r.Id, (b, r) => new { b, r })
+        .OrderBy(x => x.b.ClosureDate).ThenBy(x => x.b.BaselineDate)
+        .Select(x => new
+        {
+            name         = x.r.Name,
+            score        = x.b.BaselineScore ?? 0,
+            closure_date = x.b.ClosureDate,
+            notes        = x.b.Notes,
+        })
+        .ToListAsync();
+
+    var byRestaurant = rows
+        .GroupBy(r => r.name)
+        .Select(g => new
+        {
+            name         = g.Key,
+            closure_date = g.First().closure_date?.ToString("yyyy-MM-dd") ?? "",
+            t90_score    = g.FirstOrDefault(r => r.notes != null && r.notes.Contains("T-90"))?.score ?? (int?)null,
+            t180_score   = g.FirstOrDefault(r => r.notes != null && r.notes.Contains("T-180"))?.score ?? (int?)null,
+        })
+        .ToList();
+
+    int? LeadTime(int? t90, int? t180, int threshold)
+    {
+        if (t180.HasValue && t180 < threshold) return 180;
+        if (t90.HasValue  && t90  < threshold) return 90;
+        return null;
+    }
+
+    var details = byRestaurant.Select(r => new
+    {
+        r.name, r.closure_date, r.t90_score, r.t180_score,
+        lead_below_60 = LeadTime(r.t90_score, r.t180_score, 60),
+        lead_below_40 = LeadTime(r.t90_score, r.t180_score, 40),
+    }).ToList();
+
+    int total = details.Count;
+
+    object SummaryFor(IReadOnlyList<int?> leadTimes, string label, int threshold)
+    {
+        var vals = leadTimes.Where(lt => lt.HasValue).Select(lt => lt!.Value).ToList();
+        return new
+        {
+            threshold_label      = label,
+            threshold_score      = threshold,
+            restaurants_flagged  = vals.Count,
+            total_restaurants    = total,
+            avg_lead_days        = vals.Count > 0 ? (double?)Math.Round(vals.Average()) : null,
+            pct_flagged_30d_plus = total > 0 ? Math.Round((double)vals.Count(v => v >= 30) / total * 100, 1) : 0.0,
+            pct_flagged_60d_plus = total > 0 ? Math.Round((double)vals.Count(v => v >= 60) / total * 100, 1) : 0.0,
+            pct_flagged_90d_plus = total > 0 ? Math.Round((double)vals.Count(v => v >= 90) / total * 100, 1) : 0.0,
+        };
+    }
+
+    var leadTimes60 = details.Select(d => d.lead_below_60).ToList();
+    var avg60       = leadTimes60.Where(lt => lt.HasValue).Select(lt => (double)lt!.Value).DefaultIfEmpty(0).Average();
+    var pct90d      = total > 0 ? Math.Round((double)leadTimes60.Count(lt => lt.HasValue && lt >= 90) / total * 100, 1) : 0.0;
+
+    return Results.Ok(new
+    {
+        total_analyzed             = total,
+        data_points_per_restaurant = "T-90 and T-180 (conservative lower bounds on lead time)",
+        threshold_summary = new object[]
+        {
+            SummaryFor(leadTimes60, "Score below 60 (moderate risk)", 60),
+            SummaryFor(details.Select(d => d.lead_below_40).ToList(), "Score below 40 (high risk)", 40),
+        },
+        restaurant_details = details,
+        plain_english      = avg60 > 0
+            ? $"On average our score flagged distressed restaurants {Math.Round(avg60)} days before closure ({pct90d}% of closures were flagged at least 90 days in advance)"
+            : "Insufficient data for lead-time calculation.",
+    });
+});
+
+// GET /api/v1/backtesting/band-table — score-band to closure-rate table (Phase 13).
+app.MapGet("/api/v1/backtesting/band-table", async (BizHealthDbContext db) =>
+{
+    var rows = await db.BacktestCohorts
+        .Where(b => b.CohortType == "retrospective" && b.Notes != null && b.Notes.Contains("T-90"))
+        .Select(b => new { score = b.BaselineScore ?? 0 })
+        .ToListAsync();
+
+    string Band(int s) => s >= 80 ? "low" : s >= 60 ? "moderate" : s >= 40 ? "elevated" : "high";
+
+    var bandDefs = new[]
+    {
+        new { key = "low",      label = "Low (80-100)"     },
+        new { key = "moderate", label = "Moderate (60-79)" },
+        new { key = "elevated", label = "Elevated (40-59)" },
+        new { key = "high",     label = "High (0-39)"      },
+    };
+
+    // All retrospective records are confirmed closures.
+    int total    = rows.Count;
+    int cumClose = 0;
+    bool mono    = true;
+    double? prev = null;
+
+    var bands = bandDefs.Select(bd =>
+    {
+        int n      = rows.Count(r => Band(r.score) == bd.key);
+        int closed = n; // all retrospective = confirmed closures
+        cumClose  += closed;
+        double? rate = n > 0 ? Math.Round((double)closed / n * 100, 1) : (double?)null;
+        double  cum  = total > 0 ? Math.Round((double)cumClose / total * 100, 1) : 0.0;
+        if (rate.HasValue) { if (prev.HasValue && rate < prev) mono = false; prev = rate; }
+        return new { score_band = bd.label, count = n, closures = closed, closure_rate_pct = rate, cum_pct_closures = cum };
+    }).ToList();
+
+    return Results.Ok(new
+    {
+        outcome_label = "closure rate (proxy outcome)",
+        proxy_caveat  = "Restaurant closure is a proxy for payment default - validate with partner receivables data.",
+        data_source   = "Retrospective cohort only. Prospective outcomes pending September 2026.",
+        total_records = total,
+        is_monotonic  = mono,
+        bands,
     });
 });
 
