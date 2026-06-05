@@ -32,12 +32,12 @@ who need to assess the risk of small restaurant businesses before extending cred
     scheduler_config.py
     requirements.txt
     /signals
-      google_places.py         # Google Places API v1 — stores full response including types
+      google_places.py         # Google Places API v1 — stores full response, types, businessStatus
       foursquare.py            # Inactive — free tier returns no venue details
-      health_inspections.py    # All 10 DFW cities — confidence classification added
-      tabc_license.py          # Texas Open Data Portal — confidence classification added
-      hours_monitor.py
-      outscraper_reviews.py    # Primary review source — biweekly 1st/15th, stores FULL reviews_data
+      health_inspections.py    # All 10 DFW cities — confidence classification
+      tabc_license.py          # Texas Open Data Portal — confidence classification
+      hours_monitor.py         # Now computes total_weekly_hours + hours_reduction_pct
+      outscraper_reviews.py    # Primary review source — biweekly, stores FULL reviews_data
       outscraper_quota.py      # Monthly usage cap — 15,000 records/month with safety threshold
       sba_loans.py
       property_tax.py
@@ -46,8 +46,8 @@ who need to assess the risk of small restaurant businesses before extending cred
       engine.py
       engine_v2.py             # Current active engine
       seasonality.py
-      keyword_analyzer.py      # 5-category keyword detection from review text
-      signal_confidence.py     # TABC and inspection confidence classification
+      keyword_analyzer.py
+      signal_confidence.py
     /onboarding
       restaurant_lookup.py
       bulk_onboard.py
@@ -60,6 +60,9 @@ who need to assess the risk of small restaurant businesses before extending cred
       restaurant_classifier.py
       clean_cohort.py
       import_closed_restaurants.py
+      holdout_validation.py     # Out-of-time train/test split with leakage audit
+      lead_time_analysis.py     # Early warning lead time exhibit
+      band_outcome_table.py     # Score-band to outcome-rate table
   /demo
     index.html
   /db
@@ -68,6 +71,8 @@ who need to assess the risk of small restaurant businesses before extending cred
       outscraper_run_log.sql
   /backtesting_results
     report_{date}.json
+    holdout_validation.json
+    methodology_notes.md
 ```
 
 ### Docker Compose
@@ -85,8 +90,8 @@ who need to assess the risk of small restaurant businesses before extending cred
 - **Engine**: PostgreSQL 17
 - **ORM (.NET)**: EF Core with Npgsql provider
 - **ORM (Python)**: SQLAlchemy
-- **Connection string (.NET)**: Host=db;Port=5432;Database=bizhealth;Username=admin;Password=...
-- **Connection string (Python)**: postgresql://admin:password@db:5432/bizhealth
+- **Connection (.NET)**: Host=db;Port=5432;Database=bizhealth;Username=admin;Password=...
+- **Connection (Python)**: postgresql://admin:password@db:5432/bizhealth
 
 ### Key Tables
 
@@ -94,153 +99,124 @@ who need to assess the risk of small restaurant businesses before extending cred
 
 **raw_signals** — source, payload JSONB, scraped_at UTC
 
-Sources: google_places, outscraper_reviews, foursquare (inactive), health_inspection,
-tabc_license, hours_monitor, sba_loans, property_tax, delivery_platforms,
-outscraper_quota_exceeded, {source}_error
+**health_scores** — see full column list below
 
-**health_scores**
+**outscraper_usage** — id, restaurant_id, records_fetched, month, scraped_at
+
+**outscraper_run_log** — id, run_date, status (ok/throttled/skipped), restaurants_completed,
+restaurants_skipped, records_used_before, records_used_after, created_at
+
+**closed_restaurants** — id, name, address, city, zip, google_place_id, yelp_id,
+closure_date, closure_date_estimated, closure_source, created_at
+
+**backtest_cohort** — id, restaurant_id, cohort_type, baseline_score, baseline_risk_band,
+baseline_date, baseline_factors JSONB, outcome_90d, outcome_180d, outcome_90d_date,
+outcome_180d_date, closure_date, closure_source, notes, created_at
+
+### health_scores Columns
 ```sql
 -- Score components
-review_velocity_score     int,
-rating_trend_score        int,
-operational_score         int,
-staffing_score            int,        -- null, placeholder for future job posting signal
-financial_risk_score      int,
-overall_score             int,
-
+review_velocity_score, rating_trend_score, operational_score, staffing_score,
+financial_risk_score, overall_score,
 -- Trend analysis
-license_history_risk      boolean,
-inspection_trend          varchar,
-hours_change_count        int,
-last_inspection_date      date,
-last_inspection_score     int,
-license_status            varchar,
-license_expiry_date       date,
-
+license_history_risk, inspection_trend, hours_change_count, last_inspection_date,
+last_inspection_score, license_status, license_expiry_date,
 -- Enhanced velocity and rating
-review_gap_alert          boolean,
-one_star_spike            boolean,
-rating_deterioration      boolean,
-source_divergence         boolean,
-ninety_day_slope          varchar,
-days_since_last_review    int,
-owner_response_rate       int,
-monthly_volume_trend      varchar,
-review_count_confidence   varchar,
-seasonality_adjusted      boolean,
-comparison_method         varchar,
-volume_trend_confidence   varchar,
-recency_source            varchar,
-
+review_gap_alert, one_star_spike, rating_deterioration, source_divergence,
+ninety_day_slope, days_since_last_review, owner_response_rate, monthly_volume_trend,
+review_count_confidence, seasonality_adjusted, comparison_method, volume_trend_confidence,
+recency_source,
 -- Financial risk
-sba_default               boolean,
-repeated_sba_borrowing    boolean,
-tax_delinquent            boolean,
-sba_loan_count            int,
-sba_latest_status         varchar,
-sba_latest_amount         decimal,
-tax_delinquency_years     int,
-
+sba_default, repeated_sba_borrowing, tax_delinquent, sba_loan_count,
+sba_latest_status, sba_latest_amount, tax_delinquency_years,
 -- Delivery platforms
-doordash_listed           boolean,
-ubereats_listed           boolean,
-delivery_platform_count   int,
-delivery_status           varchar,
-delivery_platform_loss    boolean,
-
--- Composite risk cap
-composite_risk_cap        boolean,
-
+doordash_listed, ubereats_listed, delivery_platform_count, delivery_status, delivery_platform_loss,
+-- Composite risk cap (NOTE: known leakage — see Validation Status)
+composite_risk_cap,
 -- Enhanced rating trend
-pct_5star_recent          decimal,
-pct_1star_recent          decimal,
-high_negative_rate        boolean,
-negative_rate_rising      boolean,
-bimodal_distribution      boolean,
-sanitation_flag           boolean,
-operational_instability_flag boolean,
-ownership_change_flag     boolean,
-quality_decline_flag      boolean,
-financial_stress_flag     boolean,
-keyword_findings          JSONB,
-response_rate_declining   boolean,
-owner_disengaged          boolean,
-response_rate_recent      int,
-response_rate_prior       int,
-
+pct_5star_recent, pct_1star_recent, high_negative_rate, negative_rate_rising,
+bimodal_distribution, sanitation_flag, operational_instability_flag, ownership_change_flag,
+quality_decline_flag, financial_stress_flag, keyword_findings, response_rate_declining,
+owner_disengaged, response_rate_recent, response_rate_prior,
 -- Signal confidence
-tabc_confidence              varchar,  -- confirmed, not_applicable, expected_not_found, unknown
-tabc_confidence_reason       varchar,
-inspection_confidence        varchar,
-inspection_confidence_reason varchar,
-tabc_expected_missing        boolean,
-inspection_expected_missing  boolean,
-inspection_data_unavailable  boolean,
-
+tabc_confidence, tabc_confidence_reason, inspection_confidence, inspection_confidence_reason,
+tabc_expected_missing, inspection_expected_missing, inspection_data_unavailable,
+-- Phase 14 operational signals
+business_status, temporarily_closed, permanently_closed,
+total_weekly_hours, hours_reduction_pct, hours_reduction,
 -- Score factors
-score_factors             JSONB,
-scored_at                 timestamptz
-```
-
-**outscraper_usage**
-```sql
-id, restaurant_id, records_fetched, month (YYYY-MM), scraped_at
-```
-
-**outscraper_run_log**
-```sql
-id, run_date, status (ok/throttled/skipped),
-restaurants_completed, restaurants_skipped,
-records_used_before, records_used_after, created_at
-```
-
-**closed_restaurants**
-```sql
-id, name, address, city, zip, google_place_id, yelp_id,
-closure_date, closure_date_estimated, closure_source, created_at
-```
-
-**backtest_cohort**
-```sql
-id, restaurant_id, cohort_type (retrospective/prospective),
-baseline_score, baseline_risk_band, baseline_date, baseline_factors JSONB,
-outcome_90d, outcome_180d, outcome_90d_date, outcome_180d_date,
-closure_date, closure_source, notes, created_at
+score_factors JSONB, scored_at timestamptz
 ```
 
 ### Score Caps
-- Active TABC suspension or expiration: caps overall_score at 40
-- Critical health inspection failure (score < 60): caps overall_score at 50
-- license_history_risk true: caps overall_score at 65
-- sba_default true: caps overall_score at 45
-- tax_delinquent 2+ years: caps overall_score at 55
-- Composite risk cap (operational < 65 AND velocity < 30): caps overall_score at 59
-
-### Confidence Gates
-Minimum 10 data points required before applying scoring adjustments.
-Applies to: monthly_volume_trend, ninety_day_slope, recent_vs_lifetime_gap, owner_response_rate.
-insufficient_data never triggers a red warning badge in the demo UI.
-
-### Signal Confidence States
-- `confirmed` — record found and matched
-- `not_applicable` — business type does not require this signal
-- `expected_not_found` — record expected based on Google Place types but not found (risk flag)
-- `unknown` — cannot determine whether record should exist
-
-TABC expected_not_found: Google Place types include bar, night_club, brewery, winery but no TABC record
-Inspection expected_not_found: Food service types in city with working portal but no inspection records
+- Active TABC suspension/expiration: caps overall_score at 40
+- Critical health inspection failure (score < 60): caps at 50
+- license_history_risk true: caps at 65
+- sba_default true: caps at 45
+- tax_delinquent 2+ years: caps at 55
+- Composite risk cap (operational < 65 AND velocity < 30): caps at 59 — **KNOWN LEAKAGE, see below**
+- PERMANENTLY_CLOSED: caps at 20 (Phase 14)
+- TEMPORARILY_CLOSED: -30 operational_score (Phase 14)
+- hours_reduction >= 30%: -15 operational_score (Phase 14)
 
 ### overall_score Weights
-- review_velocity_score: 20%
-- rating_trend_score: 30%
-- operational_score: 30%
-- financial_risk_score: 20%
+- review_velocity_score: 20%, rating_trend_score: 30%, operational_score: 30%, financial_risk_score: 20%
 
 ### Score Risk Bands
-- 80-100: Low risk (green)
-- 60-79: Moderate risk (yellow)
-- 40-59: Elevated risk (orange)
-- 0-39: High risk (red)
+- 80-100: Low (green) | 60-79: Moderate (yellow) | 40-59: Elevated (orange) | 0-39: High (red)
+
+---
+
+## ⚠️ VALIDATION STATUS — READ BEFORE MAKING ANY ACCURACY CLAIMS
+
+**Do NOT cite "100% precision and recall" anywhere — to customers, in the demo, or in documents.**
+That number was inflated by data leakage and is retired.
+
+### What happened
+The composite risk cap (operational < 65 AND velocity < 30 → cap at 59) was tuned by observing
+the exact 3 test-set restaurants (STEEL, MI PUEBLITO, THE LAST STAND) it was then evaluated on.
+This is data leakage. A model-risk reviewer will catch it immediately.
+
+### Honest out-of-time holdout results (holdout_validation.py)
+- Train set (closures 2017-2021, n=5): 100% recall — these scored 36-46 naturally, no cap needed
+- Test set (closures 2022-2023, n=3), WITH composite cap: 100% recall — LEAKAGE, do not cite
+- Test set, WITHOUT composite cap (HONEST): **0% recall** — all 3 scored 58-59 (moderate band), missed
+- Leakage audit: 9 rules, 8 PASS, 1 FAIL (composite cap only)
+
+### What the model genuinely does well (leakage-free)
+- **Lead time**: every closure the model caught, it caught 180+ days in advance (lead_time_analysis.py)
+  - Score < 60: 8/8 closures flagged, avg lead time >= 180 days, 100% flagged 90+ days early
+  - Score < 40: 4/8 closures flagged
+- Catches HARD failures reliably (restaurants that decline across all signals)
+
+### What the model cannot yet prove
+- Catching SOFT failures — restaurants that close while maintaining 4.0+ star ratings
+- The 3 missed test restaurants kept strong ratings (rating_trend 68-87) which held overall score above 60
+
+### Phase 14 signal additions (forward-looking, cannot fix historical recall)
+- businessStatus (TEMPORARILY_CLOSED appears 30-90 days before permanent closure)
+- hours-per-day reduction (engine previously only counted days open, not hours per day)
+- These are domain-knowledge rules (PASS leakage audit) but couldn't be measured on 2022-2023
+  closures because the data wasn't collected then. Impact on historical recall: none (data gap)
+
+### The real validation is the prospective cohort
+- 107 verified DFW restaurants, scored and LOCKED June 1, 2026
+- 90-day outcomes due September 1, 2026 — this is the first leakage-free out-of-time validation
+- Because the model is locked before outcomes are known, this number cannot be gamed
+
+### Honest customer framing
+Lead with lead time and the locked prospective cohort. Say: "I'd rather show you a real number
+in September than an inflated one today." This candor is persuasive to credit professionals.
+
+### Known structural limitation
+Financial signals (SBA, property tax) are LAGGING indicators — months to years of non-payment
+before appearing in public records. They will not catch fast declines. Future signal: lease/
+eviction court records (different data source, not a scoring fix).
+
+### The "bad" definition problem (from validation framework review)
+Current backtest uses restaurant CLOSURE as the outcome. A distributor cares about PAYMENT DEFAULT
+(write-offs, 90+ days past due) — not closure. These correlate but are not the same. The real
+validation study requires a design partner's receivables data. Closure is a proxy until then.
 
 ---
 
@@ -252,257 +228,145 @@ Inspection expected_not_found: Food service types in city with working portal bu
 - GET /api/v1/restaurants/{id} — full details with score breakdown
 - POST /api/v1/restaurants — register restaurant
 - POST /api/v1/restaurants/onboard — name + address, triggers lookup and onboarding
-- POST /api/v1/restaurants/search-and-score — name + address + city, cached or fresh score in 30s
-- GET /api/v1/backtesting/summary — latest accuracy report
+- POST /api/v1/restaurants/search-and-score — name + address + city, cached or fresh in 30s
+- GET /api/v1/backtesting/summary — accuracy report
 - GET /api/v1/backtesting/cohort — paginated cohort with outcomes
-- GET /api/v1/admin/outscraper-quota — current month usage summary with backfill separated
-- GET /api/v1/admin/outscraper-runs — last 10 run history entries
-
-### search-and-score Behavior
-- Uses findplacefromtext with name+address for single precise match
-- Single high-confidence match: skips disambiguation, goes straight to scoring
-- Multiple matches: returns disambiguation list
-- Scored within 24 hours: return cached score
-- Stale score: trigger fresh run
-- Not found: trigger full onboarding pipeline
-- Timeout: 30 seconds, returns partial result
+- GET /api/v1/backtesting/holdout — out-of-time test set results
+- GET /api/v1/backtesting/lead-time — early warning lead time summary
+- GET /api/v1/backtesting/band-table — score band to outcome rate table
+- GET /api/v1/admin/outscraper-quota — current month usage, backfill separated
+- GET /api/v1/admin/outscraper-runs — last 10 run history
 
 ---
 
 ## Scraper Service (Python)
 
 ### ⚠️ DATA STORAGE POLICY — NON-NEGOTIABLE
-
 Raw data paid for or fetched from any external source MUST be stored in full in raw_signals.
 Aggregations are computed ON TOP of raw data, never INSTEAD of it.
-
-ALWAYS store in raw_signals payload:
-- The complete API response exactly as received
-- Every field returned regardless of whether currently used
-- Individual records (reviews, inspections, loans) as arrays — never discard elements
-
-THEN compute aggregations alongside raw data:
-- Monthly breakdowns, averages, trend metrics, keyword findings go in same payload
-- Aggregations can always be recomputed — raw data discarded is gone forever
-
-NEVER:
-- Store only aggregated output and discard source records
-- Filter or truncate API responses before storing
-- Decide at scrape time what fields "will be needed"
-- Optimize payload size at expense of completeness
-
-Background: In Phase 2 Outscraper scraper incorrectly discarded reviews_data array,
-storing only monthly_breakdown. 46,488 paid reviews were lost. Fixed — outscraper_reviews.py
-now stores full reviews_data alongside all aggregations.
+ALWAYS store complete API response, every field, individual records as arrays.
+THEN compute aggregations as additional payload keys.
+NEVER store only aggregated output, filter responses, or optimize payload size at expense of completeness.
+Background: Phase 2 Outscraper scraper discarded reviews_data, losing 46,488 paid reviews. Fixed Phase 11.
 
 ### Signal Sources
-| Signal | Weight | Source | Key Required | Notes |
+| Signal | Weight | Source | Key | Notes |
 |---|---|---|---|---|
-| Google review velocity | High | Google Places API v1 | Yes | Stores full response + types field |
+| Google review velocity | High | Google Places API v1 | Yes | Full response + types + businessStatus |
 | Google rating trend | High | Google Places API v1 | Yes | |
-| Outscraper reviews | High | Outscraper | Yes | Full reviews_data stored, 70 reviews/restaurant |
+| Outscraper reviews | High | Outscraper | Yes | Full reviews_data, 70 reviews/restaurant |
 | Foursquare rating | Medium | Foursquare | Yes (fsq3...) | Inactive |
-| Health inspections | High | See city routing table | No | Confidence classification added |
-| TABC license | High | Texas Open Data Portal | No | Confidence classification added |
-| Hours consistency | Medium | Google Places snapshots | No | |
-| SBA loan history | High | SBA Data.gov API | No | Fuzzy matching min 80 |
-| Property tax | High | County CAD portals | No | May return no_data_available |
+| Health inspections | High | City routing table | No | Confidence classification |
+| TABC license | High | Texas Open Data Portal | No | Confidence classification |
+| Hours consistency | Medium | Google Places snapshots | No | Now total_weekly_hours |
+| SBA loan history | High | SBA Data.gov API | No | Fuzzy matching min 80, LAGGING |
+| Property tax | High | County CAD portals | No | LAGGING, may return no_data |
 | Delivery platforms | Medium | DoorDash + Uber Eats | No | platform_unavailable in Docker |
+| businessStatus | High | Google Places API v1 | Yes | Phase 14 — temp/perm closed |
+| Hours reduction | Medium | hours_monitor periods diff | No | Phase 14 — hours/day not days |
 | Job postings | Medium | Placeholder | TBD | |
 | Website uptime | Low | Direct HTTP check | No | |
 
 ### Health Inspection City Routing
-| City | Health Authority | Result |
-|---|---|---|
-| Dallas | City of Dallas | inspections.myhealthdepartment.com/dallas |
-| Fort Worth | Tarrant County | inspections.myhealthdepartment.com/tarrant |
-| Arlington | Tarrant County | inspections.myhealthdepartment.com/tarrant |
-| Grand Prairie | Tarrant County | inspections.myhealthdepartment.com/tarrant |
-| Plano | Collin County | inspections.myhealthdepartment.com/plano |
-| Frisco | Collin County | inspections.myhealthdepartment.com/plano |
-| McKinney | Collin County | inspections.myhealthdepartment.com/plano |
-| Irving | Dallas County | no_inspection_data |
-| Garland | Dallas County | no_inspection_data |
-| Denton | Denton County | no_inspection_data |
+Dallas → dallas portal | Fort Worth/Arlington/Grand Prairie → tarrant portal |
+Plano/Frisco/McKinney → plano (Collin) portal | Irving/Garland/Denton → no_inspection_data
 
 ### Property Tax CAD Routing
-| City | CAD |
-|---|---|
-| Dallas, Irving, Garland | Dallas CAD (dallascad.org) |
-| Fort Worth, Arlington, Grand Prairie | Tarrant CAD (tad.org) |
-| Plano, Frisco, McKinney | Collin CAD (collincad.org) |
-| Denton | Denton CAD (dentoncad.com) |
+Dallas/Irving/Garland → Dallas CAD | Fort Worth/Arlington/Grand Prairie → Tarrant CAD |
+Plano/Frisco/McKinney → Collin CAD | Denton → Denton CAD
+
+### Signal Confidence States
+- confirmed — record found and matched
+- not_applicable — business type does not require this signal
+- expected_not_found — record expected from Google Place types but not found (risk flag)
+- unknown — cannot determine whether record should exist
 
 ### Outscraper Configuration
-- Reviews per restaurant: 70 (full reviews_data array stored)
-- Schedule: biweekly — 1st and 15th of month at 1:00 AM UTC
-- Monthly projected usage: 107 × 70 × 2 = 14,980 records
-- Monthly projected cost: ~$44.94
-- Hard cap: 15,000 records/month enforced via outscraper_quota.py
-- Safety threshold: 500 records — run skipped if remaining < 500
-- Throttle behavior: partial run if remaining < full projected, prioritizing least-recently scraped
-- Quota exhausted: log outscraper_quota_exceeded to raw_signals
-- Backfill: one-time 200-review pull for restaurants missing May 25+ history (complete)
-- Backfill records exempt from monthly cap, tracked separately
-- Run history: outscraper_run_log table, status ok/throttled/skipped
-- May 2026 usage: 4,975 regular + 27,973 backfill = 32,948 total
-
-### Google Places API Limitation
-Returns maximum 5 reviews, not date-sorted. rankPreference: NEWEST not supported on
-details endpoint. Reviews sorted internally by _review_dt(). Outscraper is primary source.
-Google Places now stores types field for signal confidence classification.
+- 70 reviews/restaurant, full reviews_data stored
+- Biweekly: 1st and 15th of month at 1:00 AM UTC
+- Projected: 107 × 70 × 2 = 14,980 records/month (~$44.94)
+- Hard cap: 15,000/month (outscraper_quota.py), safety threshold 500
+- Throttle: partial run if remaining < projected, prioritizing least-recently scraped
+- Backfill complete: one-time 200-review pull for May 25+ history, exempt from cap
+- 86/107 active restaurants have Outscraper data (8 missing = closed retrospective, expected)
+- May 2026: 4,975 regular + 27,973 backfill = 32,948 total
 
 ### Review Data Priority
-- Sparkline and velocity: Outscraper monthly_breakdown preferred, Google Places fallback
-- Recency (days_since_last_review): minimum of Outscraper and Google Places timestamps
-- Review count: Outscraper total_reviews_fetched when Google returns 0
-- Keyword analysis: Outscraper reviews_data (full text required)
-- Rating distribution: Outscraper reviews_data (individual ratings required)
-- Response rate: Outscraper owner_answer field
+- Sparkline/velocity: Outscraper monthly_breakdown preferred, Google fallback
+- Recency: minimum of Outscraper and Google timestamps
+- Keyword analysis + rating distribution + response rate: Outscraper reviews_data
 
-### Keyword Analysis Categories (keyword_analyzer.py)
-- operational_instability: closed early, not open, inconsistent hours
-- ownership_change: new owner, new management, under new ownership
-- sanitation_risk: health code, roaches, cockroach, dirty, unsanitary
-- quality_decline: not what it used to be, gone downhill, used to be better
-- financial_stress: prices went up, portion smaller, raised prices
-
-### Seasonality Adjustment (seasonality.py)
-- January: 0.80, February: 0.90, March: 1.05, April: 1.10, May: 1.10
-- June: 1.05, July: 0.95, August: 0.90, September: 1.05
-- October: 1.15, November: 1.10, December: 1.15
+### Seasonality (seasonality.py)
+Jan 0.80, Feb 0.90, Mar 1.05, Apr 1.10, May 1.10, Jun 1.05,
+Jul 0.95, Aug 0.90, Sep 1.05, Oct 1.15, Nov 1.10, Dec 1.15
 
 ### Scraper Schedule
-- Google Places: daily 2:00 AM UTC
-- Hours monitor: daily 3:00 AM UTC
-- Scoring engine (engine_v2.py): daily 5:00 AM UTC
-- Outscraper reviews: biweekly 1st and 15th at 1:00 AM UTC (~$44.94/month)
-- SBA loans: weekly Sunday 1:30 AM UTC
-- Property tax: weekly Sunday 2:00 AM UTC
-- Outcome tracker: weekly Sunday 3:00 AM UTC
-- Delivery platforms: weekly Monday 5:00 AM UTC
-- Health inspections + TABC: weekly Monday 4:00-4:30 AM UTC
-- New restaurant check: every 10 minutes
-
-### Restaurant Classifier
-restaurant_classifier.py verifies businesses before onboarding:
-- RESTAURANT: Google Place types include restaurant, food, meal_takeaway, bar, cafe, bakery
-- NON_RESTAURANT: liquor_store, convenience_store, grocery_or_supermarket, or name keywords
-- All cohort builder and onboarding flows verify classification before inserting
+- Google Places: daily 2 AM | Hours monitor: daily 3 AM | Scoring engine: daily 5 AM
+- Outscraper: biweekly 1st/15th 1 AM | SBA: weekly Sun 1:30 AM | Property tax: weekly Sun 2 AM
+- Outcome tracker: weekly Sun 3 AM | Delivery: weekly Mon 5 AM
+- Health inspections + TABC: weekly Mon 4-4:30 AM | New restaurant check: every 10 min
 
 ---
 
 ## Backtesting Framework
 
 ### Current Status (May 2026)
-- **Closed restaurant dataset**: 72 verified closed DFW restaurants
-- **Retrospective backtest**: 9 restaurants scored at T-90 and T-180
-- **Prospective cohort**: 107 verified DFW restaurants (cleaned)
-- **Cohort baselined**: June 1, 2026 (re-baselined after full signal set active)
-- **90-day outcomes due**: September 1, 2026
-- **180-day outcomes due**: December 1, 2026
+- Closed restaurant dataset: 72 verified closed DFW restaurants
+- Retrospective: 9 restaurants scored at T-90/T-180 (n=9, leakage in composite cap)
+- Prospective cohort: 107 verified DFW restaurants, locked June 1 2026
+- 90-day outcomes due September 1 2026 (first leakage-free validation)
+- 180-day outcomes due December 1 2026
 
 ### Prospective Cohort Distribution
-| Band | Count |
-|---|---|
-| Low (80-100) | 7 |
-| Moderate (60-79) | 47 |
-| Elevated (40-59) | 51 |
-| High (0-39) | 2 |
-| **Total** | **107** |
+Low: 7 | Moderate: 47 | Elevated: 51 | High: 2 | Total: 107
 
-### Model Performance (Retrospective, n=9)
-- **Precision**: 100%
-- **Recall**: 100% (after composite risk cap)
-- **AUC-ROC**: null — requires resolved prospective outcomes
-- Sample size preliminary — grows as prospective cohort resolves Sep/Dec 2026
-
-### Composite Risk Cap
-Finding: strong rating_trend was masking simultaneous weakness in operational and velocity.
-Fix: if operational_score < 65 AND review_velocity_score < 30, cap overall_score at 59.
-Recall improved from 77.8% to 100%.
-
-### Customer Pitch Summary
-"We backtested against 72 closed DFW restaurants. Our model correctly flagged 100% of
-closures before they happened with zero false positives. We have 107 verified DFW
-restaurants in our prospective cohort — 90-day outcome data arrives September 2026."
+### Honest Model Performance
+- Out-of-time test recall (leakage-free): 0% on n=3 — model misses soft/moderate-band closures
+- Lead time (leakage-free): 180+ days average advance warning on caught closures
+- See VALIDATION STATUS section above for full honest framing
 
 ### Demo Restaurants
-- **Healthy example**: Pecan Lodge, 2702 Main St, Dallas — score 93, all green
-- **Distressed example**: Backyard Dallas — score 51, TABC_MISSING, INSP_MISSING,
-  89 days since last review, sharply declining volume, 0% owner response, 3/7 days open
-- **Backup distressed**: The Free Man Cajun Cafe, 2630 Commerce St, Dallas
+- Healthy: Pecan Lodge, 2702 Main St, Dallas — score 93
+- Distressed: Backyard Dallas — score 51, TABC_MISSING + INSP_MISSING, 89 days no review,
+  sharply declining volume, 0% owner response, 3/7 days open
+- Backup distressed: The Free Man Cajun Cafe, 2630 Commerce St, Dallas
 
 ---
 
 ## Demo UI (http://localhost:3000)
 
-- Served via nginx — must use http://localhost:3000, NOT file://
-- Calls .NET API at http://localhost:8080
-- Search: Restaurant Name (required), Address or Zip (required), City (optional dropdown)
-
-### Four Component Score Bars
-- Review Velocity (20%)
-- Rating Trend (30%)
-- Operational Health (30%)
-- Financial Risk (20%)
-
-### Review Trend Visualization
-- Dual line year-over-year SVG chart
-- Current year: solid blue with filled area
-- Prior year: dashed gray
-- X axis: Jan-Dec, 3-character abbreviations
-- Hover crosshair: both years, YoY%, seasonally adjusted %
-- YoY summary line: green/red
-
-### Rating Trend Drill-Down
-- Rating distribution stacked bar: last 90 days vs lifetime
-- Keyword flags: colored chips (red=sanitation/instability, orange=ownership/quality, yellow=financial)
-- Owner engagement row: response rate recent vs prior with trend arrow
-
-### Signal Confidence Display
-- confirmed: existing display
-- expected_not_found: red indicator "Expected — Not Found" with tooltip
-- not_applicable: gray "N/A" with tooltip
-- unknown: gray "No Data"
+- nginx served, must use http://localhost:3000 not file://
+- Search: Name (required), Address or Zip (required), City (optional dropdown)
+- Four component score bars: Review Velocity 20%, Rating Trend 30%, Operational 30%, Financial Risk 20%
+- Dual line YoY review chart with hover crosshair, YoY%, seasonally adjusted %
+- Rating trend drill-down: distribution bar, keyword chips, owner engagement row
+- Signal confidence display: confirmed / expected_not_found (red) / not_applicable (gray) / unknown (gray)
+- Recently scored list: clickable, auto-populates, active highlight
+- Side-by-side comparison, disambiguation list, plain English recommendations
+- Backtesting tab: out-of-time results, lead time, score-band table (proxy-outcome labeled)
+- Admin footer: Outscraper usage meter, run history dots, projected cost
 
 ### Warning Badges
-- review_gap_alert, one_star_spike, rating_deterioration, source_divergence
-- sba_default, repeated_sba_borrowing, tax_delinquent
-- delivery_platform_loss
-- composite_risk_cap (orange — "Composite Risk Flag")
-- sanitation_flag (red — "Sanitation Risk")
-- owner_disengaged (orange — "Owner Disengaged")
-- bimodal_distribution (orange — "Polarized Reviews")
-- ownership_change_flag (yellow — "Ownership Change Detected")
-- tabc_expected_missing (red — "License Missing")
-- inspection_expected_missing (orange — "Inspection Records Missing")
-
-### Features
-- Recently scored list — clickable, auto-populates, active highlight
-- Side-by-side comparison with difference highlighting
-- Disambiguation list for multiple matches
-- Plain English risk recommendation per risk band
-- Backtesting tab with accuracy summary and cohort status
-- Admin footer: Outscraper usage meter, run history dots (green/yellow/red), projected cost
+review_gap_alert, one_star_spike, rating_deterioration, source_divergence, sba_default,
+repeated_sba_borrowing, tax_delinquent, delivery_platform_loss, composite_risk_cap (orange),
+sanitation_flag (red), owner_disengaged (orange), bimodal_distribution (orange),
+ownership_change_flag (yellow), tabc_expected_missing (red "License Missing"),
+inspection_expected_missing (orange), temporarily_closed (red), hours_reduction (orange)
 
 ---
 
 ## Environment Variables (.env)
-
 ```
 POSTGRES_HOST=db
 POSTGRES_PORT=5432
 POSTGRES_DB=bizhealth
 POSTGRES_USER=admin
 POSTGRES_PASSWORD=
-
 GOOGLE_PLACES_API_KEY=
 FOURSQUARE_API_KEY=        # inactive
 OUTSCRAPER_API_KEY=
 TRIPADVISOR_API_KEY=       # not yet built
 ANTHROPIC_API_KEY=
-
 ASPNETCORE_ENVIRONMENT=Development
 ```
 
@@ -510,76 +374,41 @@ ASPNETCORE_ENVIRONMENT=Development
 
 ## Developer Profile
 - Experienced C# / .NET developer — standard .NET patterns, no over-explaining
-- New to Python — add inline comments on patterns that differ from C#
+- New to Python — inline comments on patterns differing from C#
 - Docker Desktop on Windows host
 - 107 verified DFW restaurants in prospective cohort
-- 86 restaurants with Outscraper data (8 missing = closed retrospective restaurants, expected)
-- Pecan Lodge google_place_id: ChIJGXYxd92YToYR7yV_BSMQ2Xk (verified)
+- Pecan Lodge google_place_id: ChIJGXYxd92YToYR7yV_BSMQ2Xk
 
 ---
 
 ## Current Focus
-> Update this section as the project progresses.
 
-**Phase 1 — COMPLETE** — Scaffolding, Google Places scraper, raw_signals confirmed
+**Phases 1-11 — COMPLETE** (scaffolding through demo UI polish, cost controls, signal confidence)
 
-**Phase 2 — COMPLETE** — Foursquare (replaced Yelp), scoring engine, health_scores
+**Phase 12 — Customer Validation prep — COMPLETE**
+- LinkedIn outreach drafted, 20-min demo script, customer validation PDF generated
 
-**Phase 3 — COMPLETE** — Health inspections, TABC, hours monitor, operational_score
+**Phase 13 — Honest Validation — COMPLETE**
+- Out-of-time holdout validation built (holdout_validation.py)
+- Exposed composite cap leakage: honest test recall is 0%, not 100%
+- Lead-time analysis: 180+ days advance warning (leakage-free, genuine)
+- Score-band outcome table (proxy-outcome labeled)
+- methodology_notes.md documents all caveats
+- Retired the "100% precision/recall" claim everywhere
 
-**Phase 3b — COMPLETE** — Trend analysis, health_scores extended, EF Core migration
+**Phase 14 — Signal Gap Fixes — COMPLETE**
+- Added businessStatus (TEMPORARILY_CLOSED / PERMANENTLY_CLOSED) from Google Places
+- Added hours-per-day reduction detection (was only counting days open)
+- Both domain-knowledge rules, PASS leakage audit
+- Cannot retroactively fix 2022-2023 recall (data wasn't collected then)
+- Forward-looking value: catches soft failures the model previously missed
 
-**Phase 4 — COMPLETE** — APScheduler, all jobs automated
-
-**Phase 5 — COMPLETE** — Bulk CSV onboarding, dynamic scheduler, new endpoints
-
-**Phase 6 — COMPLETE** — Demo UI, three-level drill-down, search-and-score
-
-**Phase 6b — COMPLETE** — Seasonality adjustment, enhanced score factors
-
-**Phase 6c — COMPLETE** — Confidence gates, insufficient_data handling
-
-**Phase 7 — COMPLETE** — Outscraper, all 10 DFW cities, Google Places v1
-
-**Phase 8 — COMPLETE** — SBA loans, property tax, financial_risk_score
-
-**Phase 9 — COMPLETE** — DoorDash/Uber Eats checker, infrastructure ready
-
-**Phase 10 — COMPLETE** — Full backtesting framework, 100% precision/recall,
-composite risk cap, restaurant classifier, 107 verified cohort
-
-**Phase 11 — COMPLETE** — Demo UI polish, dual line YoY chart, clickable recently scored,
-Outscraper biweekly 70 reviews, 15,000 cap, rating trend enhanced (distribution,
-keywords, response rate), full reviews_data stored, data storage policy added,
-signal confidence classification (TABC + inspections), outscraper_run_log table,
-safety threshold 500 records, Backyard Dallas confirmed TABC_MISSING + INSP_MISSING,
-customer validation PDF generated (Tableside_API_CustomerValidation.pdf)
-
-**Phase 12 — Customer Validation (current)**
-- LinkedIn outreach messages drafted for distributors, equipment lenders, landlords
-- 20-minute demo script prepared with Pecan Lodge (93) and Backyard Dallas (51)
-- Customer validation PDF generated and ready
-- Goal: first customer conversation by end of June 2026
-- 90-day prospective cohort outcomes due September 1, 2026
-- Next action: send first 3 LinkedIn outreach messages this week
-
-**Phase 13 — COMPLETE** — Out-of-time holdout validation (2022 cutoff), lead-time analysis,
-score-band outcome table, methodology_notes.md, 3 new backtesting API endpoints + demo UI sections.
-Honest test-set recall: 0% without composite cap (data gap — review signals still decent at closure).
-
-**Phase 14 — COMPLETE** — businessStatus + hours-per-day real signals added
-- google_places.py: businessStatus added to field mask, stored in result payload
-- hours_monitor.py: total_weekly_hours, avg_hours_per_day, hours_reduction_pct computed from periods
-- engine_v2.py: TEMPORARILY_CLOSED → -30 operational; PERMANENTLY_CLOSED → cap at 20;
-  hours_reduction_pct >= 30% → -15 operational (all domain knowledge, no leakage)
-- health_scores: 6 new columns (business_status, temporarily_closed, permanently_closed,
-  total_weekly_hours, hours_reduction_pct, hours_reduction)
-- Demo UI: Temporarily Closed (red) and Hours Reduced (orange) warning badges
-- Holdout audit: both Phase 14 rules PASS (domain knowledge, not derived from test-set data)
-- Impact on test-set recall: none yet — signals require live scraper data, not retroactively
-  measurable for 2022–2023 retrospective restaurants; will appear in prospective cohort (Sep 2026)
-
-### Score Caps (updated)
-- TEMPORARILY_CLOSED (Google): -30 to operational_score
-- PERMANENTLY_CLOSED (Google): caps overall_score at 20
-- hours_reduction_pct >= 30%: -15 to operational_score
+**Phase 15 — Customer Validation + Design Partner (current)**
+- PDF and demo script reframed around lead time + locked prospective cohort (honest)
+- Primary goal: find a design partner willing to share anonymized receivables data
+  — this unlocks the REAL validation study (payment default, not closure proxy)
+- Send first 3 LinkedIn outreach messages
+- September 1 2026: first leakage-free prospective cohort outcomes
+- Do NOT build more signals — the model is as good as it gets without real outcome data
+- Validation study sections (bad-rate tables, swap-set, dollars-saved, PAYDEX benchmark)
+  are co-produced WITH design partner data, not before
