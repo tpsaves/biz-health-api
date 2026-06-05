@@ -71,6 +71,24 @@ _RULES = [
         ),
         "test_set_used": True,  # LEAKAGE — see above
     },
+    {
+        "rule":         "businessStatus == TEMPORARILY_CLOSED -> -30 operational",
+        "derived_from": "Phase 14 — domain knowledge. Google Maps TEMPORARILY_CLOSED is "
+                        "definitionally a closure precursor. Cannot be retroactively measured "
+                        "for the retrospective cohort; will appear in prospective outcomes (Sep/Dec 2026).",
+        "test_set_used": False,
+    },
+    {
+        "rule":         "businessStatus == PERMANENTLY_CLOSED -> cap overall_score at 20",
+        "derived_from": "Phase 14 — domain knowledge. Google Maps PERMANENTLY_CLOSED confirmation.",
+        "test_set_used": False,
+    },
+    {
+        "rule":         "hours_reduction_pct >= 30 -> -15 operational",
+        "derived_from": "Phase 14 — domain knowledge threshold. Requires two hours_monitor snapshots; "
+                        "not reconstructable for retrospective cohort. Will appear in prospective outcomes.",
+        "test_set_used": False,
+    },
 ]
 
 
@@ -231,6 +249,14 @@ def run_holdout_validation(session: Session) -> dict:
     print("  No test-set restaurant was used to derive any non-composite-cap threshold.")
     print("  All other thresholds are domain knowledge or derived from 2017-2021 closures only.")
     print(f"  Test set restaurants: {', '.join(r['name'] for r in test)}\n")
+
+    print()
+    print("PHASE 14 SIGNALS (forward-looking — not in retrospective cohort):")
+    print("  businessStatus (TEMPORARILY_CLOSED): domain knowledge, PASS")
+    print("  hours_reduction >= 30%: domain knowledge, PASS")
+    print("  Both require live scraper data — retroactive measurement not possible.")
+    print("  Impact on train/test recall: none (data gap, not a rule gap)")
+    print()
 
     result = {
         "generated_at":  date.today().isoformat(),

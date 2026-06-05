@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 _V1_BASE_URL  = "https://places.googleapis.com/v1/places"
 _V1_FIELD_MASK = (
     "id,displayName,rating,userRatingCount,"
-    "currentOpeningHours,regularOpeningHours,reviews,types"
+    "currentOpeningHours,regularOpeningHours,reviews,types,"
+    "businessStatus"
 )
 
 
@@ -175,6 +176,7 @@ def _normalize_v1_response(v1_data: dict) -> dict:
         "opening_hours":      opening_hours,
         "reviews":            reviews,
         "types":              v1_data.get("types", []),
+        "business_status":    v1_data.get("businessStatus"),
     }
 
 

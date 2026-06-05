@@ -85,12 +85,14 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     google_rating: Optional[float] = None
     google_scraped_date: Optional[str] = None
     velocity_metrics: dict = {}
+    business_status: Optional[str] = None
 
     place_types: list[str] = []
     if google_row:
         result = google_row.payload.get("result", {})
         google_review_count = result.get("user_ratings_total") or 0
         google_rating = result.get("rating")
+        business_status = result.get("business_status")
         if google_row.scraped_at:
             google_scraped_date = google_row.scraped_at.strftime("%Y-%m-%d")
         velocity_metrics = google_row.payload.get("velocity_metrics", {})
@@ -447,11 +449,19 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     hours_payload: Optional[dict] = None
     hours_scraped_date: Optional[str] = None
 
+    total_weekly_hours_val: Optional[float] = None
+    hours_reduction_pct_val: Optional[float] = None
+    hours_reduction = False
+
     if hours_row:
         hours_payload = hours_row.payload
         if hours_row.scraped_at:
             hours_scraped_date = hours_row.scraped_at.strftime("%Y-%m-%d")
-        hours_component = hours_payload.get("hours_completeness", 0)
+        hours_component           = hours_payload.get("hours_completeness", 0)
+        total_weekly_hours_val    = hours_payload.get("total_weekly_hours")
+        hours_reduction_pct_val   = hours_payload.get("hours_reduction_pct")
+        if hours_reduction_pct_val is not None and hours_reduction_pct_val >= 30:
+            hours_reduction = True
 
     operational_score = int(
         health_component * _HEALTH_WEIGHT
@@ -578,6 +588,19 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
     elif insp_confidence == 'unknown' and insp_city_has_portal:
         inspection_data_unavailable = True
 
+    # Phase 14: business status penalty (domain knowledge — not derived from any restaurant data)
+    temporarily_closed = False
+    permanently_closed = False
+    if business_status == "TEMPORARILY_CLOSED":
+        temporarily_closed = True
+        operational_score = max(0, operational_score - 30)
+    elif business_status == "PERMANENTLY_CLOSED":
+        permanently_closed = True
+
+    # Phase 14: hours reduction penalty (threshold: 30% — domain knowledge)
+    if hours_reduction:
+        operational_score = max(0, operational_score - 15)
+
     # ── overall_score ──────────────────────────────────────────────────────────
     overall_score = int(
         review_velocity_score * _VELOCITY_WEIGHT
@@ -592,6 +615,8 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         overall_score = min(overall_score, 45)
     if tax_delinquent and tax_delinquency_years >= 2:
         overall_score = min(overall_score, 55)
+    if permanently_closed:
+        overall_score = min(overall_score, 20)
 
     # Composite cap (Phase 10): prevents strong rating_trend from masking
     # simultaneous operational + velocity weakness. Derived from backtesting
@@ -1060,6 +1085,45 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             _platform_factor("Uber Eats", ue, delivery_row.payload.get("delisted_ubereats", False))
         )
 
+    if temporarily_closed:
+        operational_factors.append({
+            "signal": "google_places",
+            "label":  "Business status",
+            "value":  "Temporarily Closed (Google Maps)",
+            "impact": "negative",
+            "weight": "high",
+            "flag":   "temporarily_closed",
+        })
+
+    if permanently_closed:
+        operational_factors.append({
+            "signal": "google_places",
+            "label":  "Business status",
+            "value":  "Permanently Closed (Google Maps)",
+            "impact": "negative",
+            "weight": "high",
+            "flag":   "permanently_closed",
+        })
+
+    if hours_reduction:
+        operational_factors.append({
+            "signal": "hours_monitor",
+            "label":  "Operating hours reduced",
+            "value":  f"Weekly hours down {hours_reduction_pct_val:.0f}% vs prior snapshot",
+            "impact": "negative",
+            "weight": "medium",
+            "flag":   "hours_reduction",
+        })
+    elif total_weekly_hours_val is not None:
+        operational_factors.append({
+            "signal": "hours_monitor",
+            "label":  "Weekly operating hours",
+            "value":  f"{total_weekly_hours_val:.1f} hrs/week",
+            "impact": "neutral",
+            "weight": "low",
+            "flag":   None,
+        })
+
     if composite_risk_cap:
         operational_factors.append({
             "signal": "scoring_engine",
@@ -1126,7 +1190,10 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 tabc_confidence,       tabc_confidence_reason,
                 inspection_confidence, inspection_confidence_reason,
                 tabc_expected_missing, inspection_expected_missing,
-                inspection_data_unavailable
+                inspection_data_unavailable,
+                business_status,       temporarily_closed,
+                permanently_closed,    total_weekly_hours,
+                hours_reduction_pct,   hours_reduction
             ) VALUES (
                 :restaurant_id,
                 :review_velocity_score, :rating_trend_score,
@@ -1156,7 +1223,10 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
                 :tabc_confidence,      :tabc_confidence_reason,
                 :inspection_confidence, :inspection_confidence_reason,
                 :tabc_expected_missing, :inspection_expected_missing,
-                :inspection_data_unavailable
+                :inspection_data_unavailable,
+                :business_status,      :temporarily_closed,
+                :permanently_closed,   :total_weekly_hours,
+                :hours_reduction_pct,  :hours_reduction
             )
             """
         ),
@@ -1214,6 +1284,12 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
             "tabc_expected_missing":         tabc_expected_missing,
             "inspection_expected_missing":   inspection_expected_missing,
             "inspection_data_unavailable":   inspection_data_unavailable,
+            "business_status":               business_status,
+            "temporarily_closed":            temporarily_closed,
+            "permanently_closed":            permanently_closed,
+            "total_weekly_hours":            total_weekly_hours_val,
+            "hours_reduction_pct":           hours_reduction_pct_val,
+            "hours_reduction":               hours_reduction,
         },
     )
     session.commit()
@@ -1285,6 +1361,13 @@ def compute_scores_v2(restaurant_id: str, session: Session) -> dict:
         "tabc_expected_missing":         tabc_expected_missing,
         "inspection_expected_missing":   inspection_expected_missing,
         "inspection_data_unavailable":   inspection_data_unavailable,
+        # Phase 14
+        "business_status":               business_status,
+        "temporarily_closed":            temporarily_closed,
+        "permanently_closed":            permanently_closed,
+        "total_weekly_hours":            total_weekly_hours_val,
+        "hours_reduction_pct":           hours_reduction_pct_val,
+        "hours_reduction":               hours_reduction,
     }
     logger.info(
         "v2 scored restaurant_id=%s overall=%s financial=%s sba_default=%s "

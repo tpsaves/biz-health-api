@@ -443,6 +443,13 @@ app.MapPost("/api/v1/restaurants/search-and-score", async (SearchRequest req, Bi
             ownerDisengaged        = score.OwnerDisengaged,
             responseRateRecent     = score.ResponseRateRecent,
             responseRatePrior      = score.ResponseRatePrior,
+            // Phase 14: business status and hours reduction
+            businessStatus         = score.BusinessStatus,
+            temporarilyClosed      = score.TemporarilyClosed,
+            permanentlyClosed      = score.PermanentlyClosed,
+            totalWeeklyHours       = score.TotalWeeklyHours,
+            hoursReductionPct      = score.HoursReductionPct,
+            hoursReduction         = score.HoursReduction,
         },
         details = new
         {

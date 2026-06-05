@@ -950,6 +950,9 @@
     if (s.ownershipChangeFlag)        badges.push(`<span class="warn-badge warn-badge-review">⚠ Ownership Change Detected</span>`);
     if (s.tabcExpectedMissing)        badges.push(`<span class="warn-badge warn-badge-operational">⚠ License Missing</span>`);
     if (s.inspectionExpectedMissing)  badges.push(`<span class="warn-badge warn-badge-operational">⚠ Inspection Records Missing</span>`);
+    if (s.permanentlyClosed)          badges.push(`<span class="warn-badge warn-badge-rating">⚠ Permanently Closed</span>`);
+    if (s.temporarilyClosed)          badges.push(`<span class="warn-badge warn-badge-rating">⚠ Temporarily Closed</span>`);
+    if (s.hoursReduction)             badges.push(`<span class="warn-badge warn-badge-composite">⚠ Hours Reduced</span>`);
     return badges.length ? `<div class="warn-badges">${badges.join('')}</div>` : '';
   }
 

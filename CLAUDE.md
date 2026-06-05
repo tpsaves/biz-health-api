@@ -562,3 +562,24 @@ customer validation PDF generated (Tableside_API_CustomerValidation.pdf)
 - Goal: first customer conversation by end of June 2026
 - 90-day prospective cohort outcomes due September 1, 2026
 - Next action: send first 3 LinkedIn outreach messages this week
+
+**Phase 13 — COMPLETE** — Out-of-time holdout validation (2022 cutoff), lead-time analysis,
+score-band outcome table, methodology_notes.md, 3 new backtesting API endpoints + demo UI sections.
+Honest test-set recall: 0% without composite cap (data gap — review signals still decent at closure).
+
+**Phase 14 — COMPLETE** — businessStatus + hours-per-day real signals added
+- google_places.py: businessStatus added to field mask, stored in result payload
+- hours_monitor.py: total_weekly_hours, avg_hours_per_day, hours_reduction_pct computed from periods
+- engine_v2.py: TEMPORARILY_CLOSED → -30 operational; PERMANENTLY_CLOSED → cap at 20;
+  hours_reduction_pct >= 30% → -15 operational (all domain knowledge, no leakage)
+- health_scores: 6 new columns (business_status, temporarily_closed, permanently_closed,
+  total_weekly_hours, hours_reduction_pct, hours_reduction)
+- Demo UI: Temporarily Closed (red) and Hours Reduced (orange) warning badges
+- Holdout audit: both Phase 14 rules PASS (domain knowledge, not derived from test-set data)
+- Impact on test-set recall: none yet — signals require live scraper data, not retroactively
+  measurable for 2022–2023 retrospective restaurants; will appear in prospective cohort (Sep 2026)
+
+### Score Caps (updated)
+- TEMPORARILY_CLOSED (Google): -30 to operational_score
+- PERMANENTLY_CLOSED (Google): caps overall_score at 20
+- hours_reduction_pct >= 30%: -15 to operational_score

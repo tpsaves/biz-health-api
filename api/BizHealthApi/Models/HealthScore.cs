@@ -182,4 +182,23 @@ public class HealthScore
     public bool? InspectionDataUnavailable { get; set; }
 
     public Restaurant? Restaurant { get; set; }
+
+    // Phase 14: business status and hours reduction
+    [Column("business_status")]
+    public string? BusinessStatus { get; set; }
+
+    [Column("temporarily_closed")]
+    public bool? TemporarilyClosed { get; set; }
+
+    [Column("permanently_closed")]
+    public bool? PermanentlyClosed { get; set; }
+
+    [Column("total_weekly_hours")]
+    public decimal? TotalWeeklyHours { get; set; }
+
+    [Column("hours_reduction_pct")]
+    public decimal? HoursReductionPct { get; set; }
+
+    [Column("hours_reduction")]
+    public bool? HoursReduction { get; set; }
 }
