@@ -91,22 +91,28 @@ def log_run_status(
     records_used_before: int,
     records_used_after: int,
     session: Session,
+    no_reviews: int = 0,
+    failed: int = 0,
 ) -> None:
     """Persist a biweekly run status to outscraper_run_log for the quota history display."""
     session.execute(
         text(
             """
             INSERT INTO outscraper_run_log
-              (status, restaurants_completed, restaurants_skipped, records_used_before, records_used_after)
-            VALUES (:status, :completed, :skipped, :before, :after)
+              (status, restaurants_completed, restaurants_skipped,
+               restaurants_no_reviews, restaurants_failed,
+               records_used_before, records_used_after)
+            VALUES (:status, :completed, :skipped, :no_reviews, :failed, :before, :after)
             """
         ),
         {
-            "status":    status,
-            "completed": restaurants_completed,
-            "skipped":   restaurants_skipped,
-            "before":    records_used_before,
-            "after":     records_used_after,
+            "status":     status,
+            "completed":  restaurants_completed,
+            "skipped":    restaurants_skipped,
+            "no_reviews": no_reviews,
+            "failed":     failed,
+            "before":     records_used_before,
+            "after":      records_used_after,
         },
     )
     session.commit()

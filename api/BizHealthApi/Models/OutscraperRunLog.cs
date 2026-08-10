@@ -20,6 +20,12 @@ public class OutscraperRunLog
     [Column("restaurants_skipped")]
     public int RestaurantsSkipped { get; set; }
 
+    [Column("restaurants_no_reviews")]
+    public int? RestaurantsNoReviews { get; set; }
+
+    [Column("restaurants_failed")]
+    public int? RestaurantsFailed { get; set; }
+
     [Column("records_used_before")]
     public int RecordsUsedBefore { get; set; }
 

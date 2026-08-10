@@ -257,26 +257,73 @@ def run_outscraper_scrape() -> None:
             log_run_status("skipped", 0, 0, records_before, records_before, session)
             return
 
+        restaurants = _get_restaurants(session)
+        attempted = len(restaurants)
         completed = 0
+        no_reviews_count = 0
         quota_hit = 0
-        for r in _get_restaurants(session):
+        no_credits_count = 0
+        failed_count = 0
+        for r in restaurants:
             rid = str(r.id)
             try:
                 result = scrape_outscraper_reviews(r.google_place_id, r.name, rid, session, city=r.city)
-                if result.get("quota_exceeded"):
+                if result.get("no_credits"):
+                    no_credits_count += 1
+                    logger.warning("[outscraper] %s — no account credits", r.name)
+                elif result.get("quota_exceeded"):
                     quota_hit += 1
                     logger.warning("[outscraper] %s — quota exhausted mid-run", r.name)
+                elif result.get("total_reviews_fetched", 0) == 0:
+                    no_reviews_count += 1
+                    logger.info("[outscraper] %s — OK (0 reviews returned)", r.name)
                 else:
                     completed += 1
-                    logger.info("[outscraper] %s — OK", r.name)
+                    logger.info("[outscraper] %s — OK (%d reviews)", r.name, result["total_reviews_fetched"])
             except Exception as exc:
+                failed_count += 1
                 logger.error("[outscraper] %s — FAILED: %s", r.name, exc)
 
-        fresh = outscraper_quota_summary(session)
-        status = "throttled" if quota_hit > 0 else "ok"
-        log_run_status(status, completed, quota_hit, records_before, fresh["records_used"], session)
+        accounted = completed + no_reviews_count + quota_hit + no_credits_count + failed_count
+        if accounted != attempted:
+            logger.warning(
+                "[outscraper] invariant breach: attempted=%d accounted=%d "
+                "(completed=%d no_reviews=%d quota_hit=%d no_credits=%d failed=%d)",
+                attempted, accounted, completed, no_reviews_count, quota_hit, no_credits_count, failed_count,
+            )
 
-    logger.info("[outscraper] job complete — status=%s completed=%d quota_hit=%d", status, completed, quota_hit)
+        fresh = outscraper_quota_summary(session)
+        # Status invariant: "ok" means zero failures AND zero skips — everything
+        # that could land, did. Any exception or skip must break "ok".
+        if attempted == 0:
+            status = "empty"
+        elif completed == 0 and no_reviews_count == 0:
+            # Nothing useful landed — name the dominant cause.
+            if no_credits_count > 0:
+                status = "no_credits"
+            elif quota_hit > 0:
+                status = "quota_exhausted"
+            else:
+                status = "failed"          # only exceptions could zero it out
+        elif no_credits_count > 0 or quota_hit > 0 or failed_count > 0:
+            status = "throttled"           # partial: some landed, some didn't
+        else:
+            status = "ok"
+        # NOTE (deferred): restaurants_skipped only carries quota+credits. no_reviews
+        # and failed are logged to stdout but NOT persisted, so completed+skipped
+        # will under-count attempted by (no_reviews + failed). Revisit if run history
+        # feeds the validation study — would need two new columns + migration.
+        log_run_status(
+            status, completed, quota_hit + no_credits_count,
+            records_before, fresh["records_used"], session,
+            no_reviews=no_reviews_count, failed=failed_count,
+        )
+
+    logger.info(
+        "[outscraper] job complete — status=%s attempted=%d completed=%d "
+        "no_reviews=%d quota_hit=%d no_credits=%d failed=%d",
+        status, attempted, completed, no_reviews_count, quota_hit, no_credits_count, failed_count,
+    )
 
 
 def run_weekly_scrape() -> None:

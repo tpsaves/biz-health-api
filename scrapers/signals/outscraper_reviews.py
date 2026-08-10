@@ -107,7 +107,7 @@ def scrape_outscraper_reviews(
     )
     if resp.status_code == 402:
         logger.info("[outscraper] account has no credits — skipping %s", name)
-        return {"reviews_data": [], "monthly_breakdown": {}, "total_reviews_fetched": 0}
+        return {"reviews_data": [], "monthly_breakdown": {}, "total_reviews_fetched": 0, "no_credits": True}
     resp.raise_for_status()
     raw = resp.json()
 

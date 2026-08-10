@@ -1,0 +1,6 @@
+name,address,city,zip,closure_date,source
+Example Bistro,123 Main St,Dallas,75201,2024-03-15,manual_news
+Taco Palace,456 Oak Ave,Fort Worth,76102,2023-11-01,yelp_manual
+The Corner Grill,789 Elm Blvd,Plano,75024,,manual_research
+Riverside Kitchen,321 River Rd,Irving,75062,2024-01-20,manual_news
+Old Town Diner,654 Commerce St,McKinney,75069,,manual_research

@@ -2,6 +2,14 @@
 ## Vertical: Restaurants & Food Service (DFW Region)
 ## Product Name: Tableside API
 
+## ⚠️ NAMING — CANONICAL
+- **Tableside API** is the canonical customer-facing product name. Use it in all UI,
+  demos, PDFs, outreach, and anything a customer sees.
+- **BizHealth** is the internal project/folder name only (the repo folder is biz-health-api,
+  the database is named bizhealth, the .NET solution is BizHealthApi). These are internal
+  identifiers — do not rename them, but never show them to customers.
+- If any customer-facing surface still says "BizHealth," it should be changed to "Tableside API."
+
 ## Project Overview
 An API that aggregates public signals about restaurants and outputs a financial health score.
 Targeted at food & beverage distributors, restaurant equipment lenders, and commercial landlords
@@ -103,8 +111,9 @@ who need to assess the risk of small restaurant businesses before extending cred
 
 **outscraper_usage** — id, restaurant_id, records_fetched, month, scraped_at
 
-**outscraper_run_log** — id, run_date, status (ok/throttled/skipped), restaurants_completed,
-restaurants_skipped, records_used_before, records_used_after, created_at
+**outscraper_run_log** — id, run_date, status, restaurants_completed, restaurants_skipped,
+restaurants_no_reviews (nullable), restaurants_failed (nullable),
+records_used_before, records_used_after, created_at
 
 **closed_restaurants** — id, name, address, city, zip, google_place_id, yelp_id,
 closure_date, closure_date_estimated, closure_source, created_at
@@ -200,7 +209,7 @@ This is data leakage. A model-risk reviewer will catch it immediately.
   closures because the data wasn't collected then. Impact on historical recall: none (data gap)
 
 ### The real validation is the prospective cohort
-- 107 verified DFW restaurants, scored and LOCKED June 1, 2026
+- 94 restaurants, scored and LOCKED June 1, 2026
 - 90-day outcomes due September 1, 2026 — this is the first leakage-free out-of-time validation
 - Because the model is locked before outcomes are known, this number cannot be gamed
 
@@ -284,12 +293,53 @@ Plano/Frisco/McKinney → Collin CAD | Denton → Denton CAD
 ### Outscraper Configuration
 - 70 reviews/restaurant, full reviews_data stored
 - Biweekly: 1st and 15th of month at 1:00 AM UTC
-- Projected: 107 × 70 × 2 = 14,980 records/month (~$44.94)
+- Projected: 94 × 70 × 2 = 13,160 records/month (~$39.48)
 - Hard cap: 15,000/month (outscraper_quota.py), safety threshold 500
 - Throttle: partial run if remaining < projected, prioritizing least-recently scraped
 - Backfill complete: one-time 200-review pull for May 25+ history, exempt from cap
-- 86/107 active restaurants have Outscraper data (8 missing = closed retrospective, expected)
+- 94 restaurants total; 8 excluded per run (no google_place_id — not Google-onboarded), leaving 86 eligible
 - May 2026: 4,975 regular + 27,973 backfill = 32,948 total
+
+### Outscraper Run-Log Semantics
+
+Outcome taxonomy for each restaurant in the batch:
+- **completed** — Outscraper returned >=1 review. Writes a `raw_signals` row.
+- **no_reviews** — Outscraper queried successfully but returned an empty array. Still writes a
+  `raw_signals` row (payload has `reviews_data: []`, `total_reviews_fetched: 0`) per the
+  raw-data policy — an empty result is a real, stored signal, never dropped.
+- **quota_hit** — internal monthly record cap reached mid-run. No `raw_signals` row.
+- **no_credits** — Outscraper account balance exhausted (HTTP 402). No `raw_signals` row.
+- **failed** — an exception was raised for that restaurant. No `raw_signals` row.
+
+Status invariant: **`ok` means zero failures AND zero skips** — everything that could land, did.
+Any exception or skip breaks `ok`. Status values: `ok`, `throttled` (partial: some landed, some
+skipped/failed), `no_credits`, `quota_exhausted`, `failed`, `empty` (no eligible restaurants).
+
+Run-log columns:
+- `restaurants_completed` counts only actual reviews-fetched results — a live tally, never the
+  size of the eligible set. (Historical rows predating this fix log a flat `86` and are stale;
+  do not trust `completed` on pre-fix rows.)
+- `restaurants_skipped` = quota_hit + no_credits only.
+- `restaurants_no_reviews` and `restaurants_failed` are their own **nullable** columns. NULL on
+  historical rows means "not tracked when this run happened" — never backfill with 0.
+
+Reconciliation (SQL-only): for any run written by the current code,
+`COUNT(DISTINCT restaurant_id)` in `raw_signals` for that run's date
+== `restaurants_completed + COALESCE(restaurants_no_reviews, 0)`.
+`failed` and `skipped` are excluded from both sides because they leave no `raw_signals` footprint.
+When run-log and raw_signals disagree, **raw_signals is the source of truth.**
+
+Exception isolation: the per-restaurant loop wraps each restaurant in try/except; a single
+failure increments `failed` and continues to the next. One bad restaurant must never abort the
+batch.
+
+### Outscraper Limits — Two Distinct Ceilings
+
+The external account credit balance (402 PAYMENT REQUIRED) and the internal 15,000-record
+monthly cap (quota guard, tracked in `outscraper_usage`) are separate limits. The internal
+guard can report budget remaining (e.g. `0/15000 used`) while the account is actually out of
+credits. When a run pulls zero, check the Outscraper dashboard balance — not just the internal
+quota — before assuming the pipeline is broken.
 
 ### Review Data Priority
 - Sparkline/velocity: Outscraper monthly_breakdown preferred, Google fallback
@@ -306,6 +356,14 @@ Jul 0.95, Aug 0.90, Sep 1.05, Oct 1.15, Nov 1.10, Dec 1.15
 - Outcome tracker: weekly Sun 3 AM | Delivery: weekly Mon 5 AM
 - Health inspections + TABC: weekly Mon 4-4:30 AM | New restaurant check: every 10 min
 
+### Scheduler Reliability (Known Risk)
+
+APScheduler cron jobs run inside the scrapers container. If the container is down at fire time
+(e.g. Docker Desktop off/asleep), the job is silently dropped — no error, no catch-up. Manual
+backfill is required after any outage. TODO (not yet implemented): set `misfire_grace_time` and
+`coalesce=True` so a short-missed job runs on restart; longer term, move the scheduler to an
+always-on host rather than a dev laptop.
+
 ---
 
 ## Backtesting Framework
@@ -313,12 +371,12 @@ Jul 0.95, Aug 0.90, Sep 1.05, Oct 1.15, Nov 1.10, Dec 1.15
 ### Current Status (May 2026)
 - Closed restaurant dataset: 72 verified closed DFW restaurants
 - Retrospective: 9 restaurants scored at T-90/T-180 (n=9, leakage in composite cap)
-- Prospective cohort: 107 verified DFW restaurants, locked June 1 2026
+- Prospective cohort: 94 restaurants, locked June 1 2026
 - 90-day outcomes due September 1 2026 (first leakage-free validation)
 - 180-day outcomes due December 1 2026
 
 ### Prospective Cohort Distribution
-Low: 7 | Moderate: 47 | Elevated: 51 | High: 2 | Total: 107
+Low: 7 | Moderate: 47 | Elevated: 51 | High: 2 | Total: 94 (band breakdown at lock, pre-removal)
 
 ### Honest Model Performance
 - Out-of-time test recall (leakage-free): 0% on n=3 — model misses soft/moderate-band closures
@@ -376,8 +434,30 @@ ASPNETCORE_ENVIRONMENT=Development
 - Experienced C# / .NET developer — standard .NET patterns, no over-explaining
 - New to Python — inline comments on patterns differing from C#
 - Docker Desktop on Windows host
-- 107 verified DFW restaurants in prospective cohort
+- 94 restaurants in prospective cohort (86 eligible per run — 8 excluded for no google_place_id)
 - Pecan Lodge google_place_id: ChIJGXYxd92YToYR7yV_BSMQ2Xk
+
+---
+
+## Operations
+
+### Destructive SQL Discipline
+
+Never run UPDATE/DELETE on log tables without first running a SELECT dry-run with the IDENTICAL
+WHERE clause and confirming the exact row count. Target rows by UUID primary key (`id IN (...)`),
+not by value filters like status or count — those can drift onto legitimate rows when multiple
+rows share the same values.
+
+### Windows / PowerShell Operational Notes
+
+- `psql` is not on the Windows PATH; run it via `docker exec -e PGPASSWORD=... <db-container>
+  psql -U admin -d bizhealth -c "..."`.
+- PowerShell reserves `<`. Never use `psql -f /dev/stdin < file.sql`. Run migrations with inline
+  `-c "..."` or `-f` pointing at a path inside the container.
+- Large prompts to Claude Code: pasted input is capped (~5KB) and multi-line paste can corrupt in
+  the classic console. Use the standing pattern — drop a `.md` in the project root and tell Claude
+  Code to `read <file> and follow the instructions in it`. Prefer Windows Terminal over the
+  classic console host for pasting.
 
 ---
 

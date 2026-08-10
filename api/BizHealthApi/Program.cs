@@ -835,13 +835,15 @@ app.MapGet("/api/v1/admin/outscraper-runs", async (BizHealthDbContext db) =>
 
     return Results.Ok(runs.Select(r => new
     {
-        run_date              = r.RunDate.ToString("yyyy-MM-dd"),
-        status                = r.Status,
-        restaurants_completed = r.RestaurantsCompleted,
-        restaurants_skipped   = r.RestaurantsSkipped,
-        records_used_before   = r.RecordsUsedBefore,
-        records_used_after    = r.RecordsUsedAfter,
-        created_at            = r.CreatedAt,
+        run_date                 = r.RunDate.ToString("yyyy-MM-dd"),
+        status                   = r.Status,
+        restaurants_completed    = r.RestaurantsCompleted,
+        restaurants_skipped      = r.RestaurantsSkipped,
+        restaurants_no_reviews   = r.RestaurantsNoReviews,
+        restaurants_failed       = r.RestaurantsFailed,
+        records_used_before      = r.RecordsUsedBefore,
+        records_used_after       = r.RecordsUsedAfter,
+        created_at               = r.CreatedAt,
     }));
 });
 
